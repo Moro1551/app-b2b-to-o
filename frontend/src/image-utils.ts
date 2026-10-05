@@ -42,6 +42,30 @@ async function uploadLocal(uri: string, mime: string): Promise<string> {
   return j.url || j.path;
 }
 
+export async function uploadAnyFile(uri: string, mime: string, filename: string): Promise<{ url: string; absoluteUrl: string }> {
+  const token = getAuthToken();
+  const form = new FormData();
+  if (Platform.OS === "web") {
+    const blob = await (await fetch(uri)).blob();
+    form.append("file", blob, filename);
+  } else {
+    // @ts-ignore RN native shape
+    form.append("file", { uri, name: filename, type: mime });
+  }
+  const res = await fetch(`${API_BASE}/upload`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: form,
+  });
+  if (!res.ok) {
+    const txt = await res.text();
+    throw new Error(txt || `HTTP ${res.status}`);
+  }
+  const j = await res.json();
+  const relative = j.url || `/api/files/${j.path}`;
+  return { url: relative, absoluteUrl: toRemoteUrl(relative) };
+}
+
 export async function pickImage(fromCamera = false): Promise<string | null> {
   if (fromCamera) {
     const perm = await ImagePicker.requestCameraPermissionsAsync();

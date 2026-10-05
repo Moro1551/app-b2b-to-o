@@ -826,24 +826,28 @@ async def fx_usd_to_hnl(user: dict = Depends(get_current_user)):
 
 
 # ---------------- Files / Object Storage ----------------
-ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/jpg", "image/png", "image/webp", "image/heic", "image/heif"}
-MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB
+ALLOWED_UPLOAD_TYPES = {
+    "image/jpeg", "image/jpg", "image/png", "image/webp", "image/heic", "image/heif",
+    "application/pdf",
+}
+MAX_UPLOAD_BYTES = 20 * 1024 * 1024  # 20 MB
 
 
 def _ext_from_mime(mime: str) -> str:
     return {
         "image/jpeg": "jpg", "image/jpg": "jpg", "image/png": "png",
         "image/webp": "webp", "image/heic": "heic", "image/heif": "heif",
-    }.get(mime, "jpg")
+        "application/pdf": "pdf",
+    }.get(mime, "bin")
 
 
 @api_router.post("/upload")
 async def upload_file(file: UploadFile = File(...), user: dict = Depends(get_current_user)):
     content = await file.read()
     if len(content) > MAX_UPLOAD_BYTES:
-        raise HTTPException(413, "Archivo demasiado grande (máx 10MB)")
+        raise HTTPException(413, "Archivo demasiado grande (máx 20MB)")
     mime = (file.content_type or "").lower()
-    if mime not in ALLOWED_IMAGE_TYPES:
+    if mime not in ALLOWED_UPLOAD_TYPES:
         raise HTTPException(400, f"Tipo no soportado: {mime}")
     ext = _ext_from_mime(mime)
     path = f"{APP_NAME}/uploads/{user['user_id']}/{uuid.uuid4().hex}.{ext}"

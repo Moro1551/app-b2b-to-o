@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { View, Text, StyleSheet, Pressable, ScrollView, ActivityIndicator, Alert, Platform } from "react-native";
+import { View, Text, StyleSheet, Pressable, ScrollView, ActivityIndicator, Alert, Platform, Linking, Share } from "react-native";
 import Ionicons from "@react-native-vector-icons/ionicons";
 import { useRouter } from "expo-router";
 import { useQuery } from "@tanstack/react-query";
@@ -8,7 +8,7 @@ import * as Print from "expo-print";
 import * as Sharing from "expo-sharing";
 import { api } from "@/src/api";
 import { useBusiness, formatMoney } from "@/src/business-context";
-import { toRemoteUrl } from "@/src/image-utils";
+import { toRemoteUrl, uploadAnyFile } from "@/src/image-utils";
 import { colors, radius, spacing } from "@/src/theme";
 
 export default function Catalog() {
@@ -16,6 +16,7 @@ export default function Catalog() {
   const insets = useSafeAreaInsets();
   const { activeId, activeBusiness } = useBusiness();
   const [generating, setGenerating] = useState(false);
+  const [sharingWa, setSharingWa] = useState(false);
 
   const { data: products = [], isLoading } = useQuery({
     queryKey: ["products", activeId],
@@ -91,6 +92,30 @@ export default function Catalog() {
     }
   };
 
+  const shareWhatsapp = async () => {
+    if (sharingWa || isLoading) return;
+    setSharingWa(true);
+    try {
+      const { uri } = await Print.printToFileAsync({ html: buildHtml() });
+      const name = `catalogo-${(activeBusiness?.name || "negocio").replace(/\s+/g, "-").toLowerCase()}.pdf`;
+      const { absoluteUrl } = await uploadAnyFile(uri, "application/pdf", name);
+      const text = `Catálogo de ${activeBusiness?.name || "nuestro negocio"} 📒\n${absoluteUrl}`;
+      const waUrl = `https://wa.me/?text=${encodeURIComponent(text)}`;
+      const canOpen = await Linking.canOpenURL(waUrl);
+      if (canOpen) {
+        await Linking.openURL(waUrl);
+      } else if (Platform.OS === "web" && (navigator as any).share) {
+        await (navigator as any).share({ title: "Catálogo", text, url: absoluteUrl });
+      } else {
+        await Share.share({ message: text });
+      }
+    } catch (e: any) {
+      Alert.alert("Error", e?.message || "No se pudo compartir el catálogo");
+    } finally {
+      setSharingWa(false);
+    }
+  };
+
   return (
     <View style={[styles.wrap, { paddingTop: insets.top }]}>
       <View style={styles.header}>
@@ -108,12 +133,26 @@ export default function Catalog() {
             El catálogo incluye encabezado con nombre, subtítulo y contactos del negocio, y una tarjeta por producto con foto, categoría, descripción y precio.
           </Text>
         </View>
+        <Pressable
+          style={[styles.waBtn, (sharingWa || isLoading) && { opacity: 0.6 }]}
+          onPress={shareWhatsapp}
+          disabled={sharingWa || isLoading}
+          testID="catalog-whatsapp"
+        >
+          {sharingWa ? <ActivityIndicator color="#FFFFFF" /> : <>
+            <Ionicons name="logo-whatsapp" size={20} color="#FFFFFF" />
+            <Text style={styles.waTxt}>Compartir por WhatsApp</Text>
+          </>}
+        </Pressable>
         <Pressable style={styles.cta} onPress={generate} disabled={generating || isLoading} testID="catalog-generate">
           {generating ? <ActivityIndicator color={colors.onBrandPrimary} /> : <>
             <Ionicons name="document-text" size={20} color={colors.onBrandPrimary} />
             <Text style={styles.ctaTxt}>Generar y compartir PDF</Text>
           </>}
         </Pressable>
+        <Text style={styles.waHint}>
+          "Compartir por WhatsApp" sube el PDF a la nube y envía el enlace para que tus clientes lo abran desde cualquier dispositivo.
+        </Text>
       </ScrollView>
     </View>
   );
@@ -140,4 +179,10 @@ const styles = StyleSheet.create({
     backgroundColor: colors.brandPrimary, paddingVertical: spacing.md, borderRadius: radius.pill,
   },
   ctaTxt: { color: colors.onBrandPrimary, fontWeight: "600", fontSize: 16 },
+  waBtn: {
+    flexDirection: "row", alignItems: "center", gap: spacing.sm, justifyContent: "center",
+    backgroundColor: "#25D366", paddingVertical: spacing.md, borderRadius: radius.pill, marginBottom: spacing.sm,
+  },
+  waTxt: { color: "#FFFFFF", fontWeight: "600", fontSize: 16 },
+  waHint: { fontSize: 12, color: colors.muted, textAlign: "center", marginTop: spacing.md, lineHeight: 17 },
 });
