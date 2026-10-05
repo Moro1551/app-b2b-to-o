@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { BottomSheetModal } from "@gorhom/bottom-sheet";
 import { colors, radius, spacing } from "@/src/theme";
 import { useBusiness } from "@/src/business-context";
+import { toRemoteUrl } from "@/src/image-utils";
 import { BusinessSwitcherSheet } from "./business-switcher";
 
 export function TopHeader({ title }: { title?: string }) {
@@ -22,7 +23,7 @@ export function TopHeader({ title }: { title?: string }) {
       >
         <View style={styles.avatar}>
           {activeBusiness?.logo ? (
-            <Image source={{ uri: activeBusiness.logo }} style={styles.avatarImg} contentFit="cover" />
+            <Image source={{ uri: toRemoteUrl(activeBusiness.logo) }} style={styles.avatarImg} contentFit="cover" />
           ) : (
             <Text style={styles.avatarTxt}>{activeBusiness?.name?.charAt(0)?.toUpperCase() ?? "?"}</Text>
           )}

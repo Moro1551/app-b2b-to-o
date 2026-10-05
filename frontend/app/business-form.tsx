@@ -8,6 +8,7 @@ import { FormScreen, Field, formStyles } from "@/src/components/form-screen";
 import { api } from "@/src/api";
 import { useBusiness } from "@/src/business-context";
 import { pickImage } from "@/src/image-utils";
+import { toRemoteUrl } from "@/src/image-utils";
 import { colors, radius, spacing } from "@/src/theme";
 
 export default function BusinessForm() {
@@ -84,7 +85,7 @@ export default function BusinessForm() {
     >
       <Pressable style={styles.logoBtn} onPress={chooseLogo} testID="biz-logo-btn">
         {form.logo ? (
-          <Image source={{ uri: form.logo }} style={styles.logoImg} contentFit="cover" />
+          <Image source={{ uri: toRemoteUrl(form.logo) }} style={styles.logoImg} contentFit="cover" />
         ) : (
           <View style={styles.logoPlaceholder}>
             <Ionicons name="image-outline" size={32} color={colors.muted} />

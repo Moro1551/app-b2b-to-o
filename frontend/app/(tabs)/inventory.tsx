@@ -8,6 +8,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { TopHeader } from "@/src/components/top-header";
 import { EmptyState } from "@/src/components/empty-state";
 import { useBusiness, formatMoney } from "@/src/business-context";
+import { toRemoteUrl } from "@/src/image-utils";
 import { api } from "@/src/api";
 import { colors, radius, spacing } from "@/src/theme";
 
@@ -125,7 +126,7 @@ function ProductCard({ item, currency }: { item: any; currency: string }) {
     >
       <View style={styles.photoWrap}>
         {item.photos?.[0] ? (
-          <Image source={{ uri: item.photos[0] }} style={styles.photo} contentFit="cover" />
+          <Image source={{ uri: toRemoteUrl(item.photos[0]) }} style={styles.photo} contentFit="cover" />
         ) : (
           <View style={[styles.photo, styles.photoFallback]}>
             <Ionicons name="image-outline" size={32} color={colors.muted} />

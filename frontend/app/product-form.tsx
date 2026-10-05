@@ -8,6 +8,7 @@ import { FormScreen, Field, formStyles } from "@/src/components/form-screen";
 import { api } from "@/src/api";
 import { useBusiness, formatMoney } from "@/src/business-context";
 import { pickImage } from "@/src/image-utils";
+import { toRemoteUrl } from "@/src/image-utils";
 import { colors, radius, spacing } from "@/src/theme";
 
 export default function ProductForm() {
@@ -104,7 +105,7 @@ export default function ProductForm() {
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm }}>
           {(form.photos || []).map((uri: string, idx: number) => (
             <View key={idx} style={styles.photoBox}>
-              <Image source={{ uri }} style={styles.photoImg} contentFit="cover" />
+              <Image source={{ uri: toRemoteUrl(uri) }} style={styles.photoImg} contentFit="cover" />
               <Pressable style={styles.photoRemove} onPress={() => removePhoto(idx)}>
                 <Ionicons name="close" size={14} color="#fff" />
               </Pressable>

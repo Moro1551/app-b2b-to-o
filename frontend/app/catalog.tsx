@@ -8,6 +8,7 @@ import * as Print from "expo-print";
 import * as Sharing from "expo-sharing";
 import { api } from "@/src/api";
 import { useBusiness, formatMoney } from "@/src/business-context";
+import { toRemoteUrl } from "@/src/image-utils";
 import { colors, radius, spacing } from "@/src/theme";
 
 export default function Catalog() {
@@ -29,7 +30,7 @@ export default function Catalog() {
     const headerColor = b?.color || "#9D7A2A";
     const items = products.map((p: any) => `
       <div class="card">
-        ${p.photos?.[0] ? `<img src="${p.photos[0]}" />` : `<div class="noimg">Sin foto</div>`}
+        ${p.photos?.[0] ? `<img src="${toRemoteUrl(p.photos[0])}" />` : `<div class="noimg">Sin foto</div>`}
         <div class="info">
           <div class="pname">${escape(p.name)}</div>
           ${p.category ? `<div class="pcat">${escape(p.category)}</div>` : ""}

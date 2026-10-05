@@ -6,6 +6,7 @@ import Ionicons from "@react-native-vector-icons/ionicons";
 import { useRouter } from "expo-router";
 import { colors, radius, spacing } from "@/src/theme";
 import { useBusiness } from "@/src/business-context";
+import { toRemoteUrl } from "@/src/image-utils";
 
 export const BusinessSwitcherSheet = forwardRef<BottomSheetModal>((_, ref) => {
   const { businesses, activeId, switchBusiness } = useBusiness();
@@ -42,7 +43,7 @@ export const BusinessSwitcherSheet = forwardRef<BottomSheetModal>((_, ref) => {
               >
                 <View style={styles.avatar}>
                   {b.logo ? (
-                    <Image source={{ uri: b.logo }} style={styles.avatarImg} contentFit="cover" />
+                    <Image source={{ uri: toRemoteUrl(b.logo) }} style={styles.avatarImg} contentFit="cover" />
                   ) : (
                     <Text style={styles.avatarTxt}>{b.name.charAt(0).toUpperCase()}</Text>
                   )}

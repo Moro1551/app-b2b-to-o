@@ -1,4 +1,6 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Request, Depends
+from fastapi import FastAPI, APIRouter, HTTPException, Request, Depends, UploadFile, File
+from fastapi.responses import Response
+from fastapi.concurrency import run_in_threadpool
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -10,6 +12,7 @@ from typing import List, Optional
 import uuid
 from datetime import datetime, timezone, timedelta
 import httpx
+import requests
 from emergentintegrations.llm.chat import LlmChat, UserMessage
 
 
@@ -18,6 +21,75 @@ load_dotenv(ROOT_DIR / '.env')
 
 EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY", "")
 CLAUDE_MODEL = "claude-haiku-4-5-20251001"
+
+# ---------------- PayPal ----------------
+PAYPAL_CLIENT_ID = os.environ.get("PAYPAL_CLIENT_ID", "")
+PAYPAL_SECRET = os.environ.get("PAYPAL_SECRET", "")
+PAYPAL_MODE = (os.environ.get("PAYPAL_MODE") or "sandbox").lower()
+PAYPAL_BASE = "https://api-m.sandbox.paypal.com" if PAYPAL_MODE != "live" else "https://api-m.paypal.com"
+
+
+async def paypal_token() -> str:
+    if not PAYPAL_CLIENT_ID or not PAYPAL_SECRET:
+        raise HTTPException(500, "PayPal no configurado")
+    async with httpx.AsyncClient(timeout=20.0) as cli:
+        r = await cli.post(
+            f"{PAYPAL_BASE}/v1/oauth2/token",
+            auth=(PAYPAL_CLIENT_ID, PAYPAL_SECRET),
+            data={"grant_type": "client_credentials"},
+            headers={"Accept": "application/json"},
+        )
+    if r.status_code != 200:
+        raise HTTPException(502, f"PayPal auth: {r.status_code} {r.text}")
+    return r.json()["access_token"]
+
+# ---------------- Object Storage ----------------
+STORAGE_BASE = (os.environ.get("INTEGRATION_PROXY_URL") or "").strip() or "https://integrations.emergentagent.com"
+STORAGE_URL = STORAGE_BASE.rstrip("/") + "/objstore/api/v1/storage"
+APP_NAME = "mis-negocios"
+_storage_key: Optional[str] = None
+
+
+def _init_storage() -> str:
+    global _storage_key
+    if _storage_key:
+        return _storage_key
+    resp = requests.post(f"{STORAGE_URL}/init", json={"emergent_key": EMERGENT_LLM_KEY}, timeout=30)
+    resp.raise_for_status()
+    _storage_key = resp.json()["storage_key"]
+    return _storage_key
+
+
+def _put_object(path: str, data: bytes, content_type: str) -> dict:
+    global _storage_key
+    key = _init_storage()
+    r = requests.put(
+        f"{STORAGE_URL}/objects/{path}",
+        headers={"X-Storage-Key": key, "Content-Type": content_type},
+        data=data, timeout=120,
+    )
+    if r.status_code == 503:
+        _storage_key = None
+        key = _init_storage()
+        r = requests.put(
+            f"{STORAGE_URL}/objects/{path}",
+            headers={"X-Storage-Key": key, "Content-Type": content_type},
+            data=data, timeout=120,
+        )
+    r.raise_for_status()
+    return r.json()
+
+
+def _get_object(path: str) -> tuple[bytes, str]:
+    global _storage_key
+    key = _init_storage()
+    r = requests.get(f"{STORAGE_URL}/objects/{path}", headers={"X-Storage-Key": key}, timeout=60)
+    if r.status_code == 503:
+        _storage_key = None
+        key = _init_storage()
+        r = requests.get(f"{STORAGE_URL}/objects/{path}", headers={"X-Storage-Key": key}, timeout=60)
+    r.raise_for_status()
+    return r.content, r.headers.get("Content-Type", "application/octet-stream")
 
 mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
@@ -168,6 +240,8 @@ class Sale(BaseModel):
     total: float = 0.0
     paid: float = 0.0
     note: Optional[str] = ""
+    paypal_order_id: Optional[str] = ""
+    paypal_status: Optional[str] = ""  # "created" | "approved" | "captured" | "failed"
     created_at: str = Field(default_factory=now_iso)
 
 
@@ -480,6 +554,123 @@ async def delete_sale(bid: str, sid: str, user: dict = Depends(get_current_user)
     return {"ok": True}
 
 
+# ---------------- PayPal (Sandbox) ----------------
+class PayPalOrderIn(BaseModel):
+    return_url: str
+    cancel_url: Optional[str] = ""
+    amount_usd: Optional[float] = None  # defaults to sale.total - sale.paid
+
+
+@api_router.post("/businesses/{bid}/sales/{sid}/paypal/order")
+async def paypal_create_order(bid: str, sid: str, data: PayPalOrderIn, user: dict = Depends(get_current_user)):
+    await require_business(bid, user)
+    sale = await db.sales.find_one({"id": sid, "business_id": bid}, {"_id": 0})
+    if not sale:
+        raise HTTPException(404, "Venta no encontrada")
+    due = (data.amount_usd if data.amount_usd and data.amount_usd > 0 else max(0.0, (sale.get("total", 0.0) - sale.get("paid", 0.0))))
+    if due <= 0:
+        raise HTTPException(400, "La venta ya está pagada")
+    token = await paypal_token()
+    payload = {
+        "intent": "CAPTURE",
+        "purchase_units": [{
+            "reference_id": sid,
+            "description": f"Venta #{sid[:8]}",
+            "amount": {"currency_code": "USD", "value": f"{due:.2f}"},
+        }],
+        "application_context": {
+            "brand_name": "Mis Negocios",
+            "user_action": "PAY_NOW",
+            "return_url": data.return_url,
+            "cancel_url": data.cancel_url or data.return_url,
+        },
+    }
+    async with httpx.AsyncClient(timeout=25.0) as cli:
+        r = await cli.post(
+            f"{PAYPAL_BASE}/v2/checkout/orders",
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            json=payload,
+        )
+    if r.status_code not in (200, 201):
+        raise HTTPException(502, f"PayPal create order: {r.status_code} {r.text}")
+    j = r.json()
+    order_id = j["id"]
+    approve_url = next((l["href"] for l in j.get("links", []) if l.get("rel") == "approve"), None)
+    if not approve_url:
+        raise HTTPException(502, "PayPal: approve_url no encontrado")
+    await db.sales.update_one(
+        {"id": sid, "business_id": bid},
+        {"$set": {"paypal_order_id": order_id, "paypal_status": "created"}},
+    )
+    return {"order_id": order_id, "approve_url": approve_url, "amount_usd": round(due, 2)}
+
+
+@api_router.post("/businesses/{bid}/sales/{sid}/paypal/capture")
+async def paypal_capture(bid: str, sid: str, user: dict = Depends(get_current_user)):
+    await require_business(bid, user)
+    sale = await db.sales.find_one({"id": sid, "business_id": bid}, {"_id": 0})
+    if not sale:
+        raise HTTPException(404, "Venta no encontrada")
+    order_id = sale.get("paypal_order_id")
+    if not order_id:
+        raise HTTPException(400, "No hay orden PayPal pendiente para esta venta")
+
+    token = await paypal_token()
+    async with httpx.AsyncClient(timeout=25.0) as cli:
+        r = await cli.post(
+            f"{PAYPAL_BASE}/v2/checkout/orders/{order_id}/capture",
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        )
+    if r.status_code not in (200, 201):
+        # 422 ORDER_ALREADY_CAPTURED -> treat as success via GET order
+        if r.status_code == 422 and "ORDER_ALREADY_CAPTURED" in r.text:
+            async with httpx.AsyncClient(timeout=15.0) as cli:
+                g = await cli.get(
+                    f"{PAYPAL_BASE}/v2/checkout/orders/{order_id}",
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+            if g.status_code == 200:
+                j = g.json()
+            else:
+                raise HTTPException(502, f"PayPal capture: {r.status_code} {r.text}")
+        else:
+            raise HTTPException(502, f"PayPal capture: {r.status_code} {r.text}")
+    else:
+        j = r.json()
+
+    status = j.get("status", "")
+    captured_value = 0.0
+    try:
+        pu = (j.get("purchase_units") or [{}])[0]
+        caps = (pu.get("payments") or {}).get("captures") or []
+        if caps:
+            captured_value = float(caps[0].get("amount", {}).get("value") or 0.0)
+    except Exception:
+        pass
+
+    paid_before = float(sale.get("paid", 0.0))
+    if status.upper() == "COMPLETED":
+        new_paid = paid_before + captured_value
+        await db.sales.update_one(
+            {"id": sid, "business_id": bid},
+            {"$set": {"paid": new_paid, "paypal_status": "captured"}},
+        )
+        # Record ingreso tx (converted; stored at captured USD amount with note)
+        tx = Transaction(
+            business_id=bid, type="ingreso", category="PayPal",
+            amount=captured_value,
+            description=f"PayPal capture venta #{sid[:8]} (USD {captured_value:.2f})",
+        )
+        await db.transactions.insert_one(tx.dict())
+        return {"ok": True, "status": status, "captured_usd": captured_value, "paid": new_paid}
+
+    await db.sales.update_one(
+        {"id": sid, "business_id": bid},
+        {"$set": {"paypal_status": status.lower() or "failed"}},
+    )
+    raise HTTPException(400, f"Estado PayPal: {status or 'desconocido'}")
+
+
 # ---------------- Transactions ----------------
 @api_router.get("/businesses/{bid}/transactions", response_model=List[Transaction])
 async def list_transactions(bid: str, user: dict = Depends(get_current_user)):
@@ -538,6 +729,67 @@ async def dashboard(bid: str, user: dict = Depends(get_current_user)):
 @api_router.get("/")
 async def root():
     return {"message": "Mis Negocios API"}
+
+
+# ---------------- Files / Object Storage ----------------
+ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/jpg", "image/png", "image/webp", "image/heic", "image/heif"}
+MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB
+
+
+def _ext_from_mime(mime: str) -> str:
+    return {
+        "image/jpeg": "jpg", "image/jpg": "jpg", "image/png": "png",
+        "image/webp": "webp", "image/heic": "heic", "image/heif": "heif",
+    }.get(mime, "jpg")
+
+
+@api_router.post("/upload")
+async def upload_file(file: UploadFile = File(...), user: dict = Depends(get_current_user)):
+    content = await file.read()
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(413, "Archivo demasiado grande (máx 10MB)")
+    mime = (file.content_type or "").lower()
+    if mime not in ALLOWED_IMAGE_TYPES:
+        raise HTTPException(400, f"Tipo no soportado: {mime}")
+    ext = _ext_from_mime(mime)
+    path = f"{APP_NAME}/uploads/{user['user_id']}/{uuid.uuid4().hex}.{ext}"
+    try:
+        await run_in_threadpool(_put_object, path, content, mime)
+    except requests.HTTPError as e:
+        status = e.response.status_code if e.response is not None else 500
+        if status == 402:
+            raise HTTPException(402, "Sin crédito de almacenamiento")
+        raise HTTPException(502, f"Error subiendo archivo: {status}")
+    except Exception as e:
+        logger.exception("upload failed")
+        raise HTTPException(502, f"Error subiendo archivo: {e}")
+
+    await db.files.insert_one({
+        "path": path,
+        "user_id": user["user_id"],
+        "size": len(content),
+        "content_type": mime,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
+    return {"path": path, "url": f"/api/files/{path}"}
+
+
+@api_router.get("/files/{file_path:path}")
+async def get_file(file_path: str):
+    # Public read for product/catalog display; existence is validated via DB
+    meta = await db.files.find_one({"path": file_path}, {"_id": 0})
+    if not meta:
+        raise HTTPException(404, "Archivo no encontrado")
+    try:
+        data, ct = await run_in_threadpool(_get_object, file_path)
+    except Exception as e:
+        logger.warning("file fetch error: %s", e)
+        raise HTTPException(404, "Archivo no encontrado")
+    return Response(
+        content=data,
+        media_type=meta.get("content_type") or ct,
+        headers={"Cache-Control": "public, max-age=31536000, immutable"},
+    )
 
 
 # ---------------- AI (Claude Haiku 4.5) ----------------
@@ -667,8 +919,14 @@ async def startup():
         await db.user_sessions.create_index("user_id")
         await db.user_sessions.create_index("expires_at", expireAfterSeconds=0)
         await db.businesses.create_index("user_id")
+        await db.files.create_index("path", unique=True)
     except Exception as e:
         logger.warning("Index creation warning: %s", e)
+    try:
+        await run_in_threadpool(_init_storage)
+        logger.info("Object storage initialized")
+    except Exception as e:
+        logger.warning("Object storage init failed: %s", e)
 
 
 @app.on_event("shutdown")

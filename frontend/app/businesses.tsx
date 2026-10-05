@@ -4,6 +4,7 @@ import Ionicons from "@react-native-vector-icons/ionicons";
 import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useBusiness } from "@/src/business-context";
+import { toRemoteUrl } from "@/src/image-utils";
 import { colors, radius, spacing } from "@/src/theme";
 
 export default function BusinessesList() {
@@ -32,7 +33,7 @@ export default function BusinessesList() {
               <View style={[styles.row, active && styles.rowActive]}>
                 <Pressable style={{ flexDirection: "row", alignItems: "center", gap: spacing.md, flex: 1 }} onPress={() => switchBusiness(item.id)} testID={`biz-list-${item.id}`}>
                   <View style={styles.avatar}>
-                    {item.logo ? <Image source={{ uri: item.logo }} style={styles.avatarImg} contentFit="cover" /> : <Text style={styles.avatarTxt}>{item.name.charAt(0).toUpperCase()}</Text>}
+                    {item.logo ? <Image source={{ uri: toRemoteUrl(item.logo) }} style={styles.avatarImg} contentFit="cover" /> : <Text style={styles.avatarTxt}>{item.name.charAt(0).toUpperCase()}</Text>}
                   </View>
                   <View style={{ flex: 1 }}>
                     <Text style={styles.name}>{item.name}</Text>
