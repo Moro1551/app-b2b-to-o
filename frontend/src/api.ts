@@ -56,6 +56,8 @@ export const api = {
   createTransaction: (bid: string, data: any) => request<any>(`/businesses/${bid}/transactions`, { method: "POST", body: JSON.stringify(data) }),
   deleteTransaction: (bid: string, tid: string) => request<any>(`/businesses/${bid}/transactions/${tid}`, { method: "DELETE" }),
 
+  fxUsdHnl: () => request<{ rate: number; source: string; fetched_at: string }>("/fx/usd-to-hnl"),
+
   dashboard: (bid: string) => request<any>(`/businesses/${bid}/dashboard`),
 };
 

@@ -43,6 +43,58 @@ async def paypal_token() -> str:
         raise HTTPException(502, f"PayPal auth: {r.status_code} {r.text}")
     return r.json()["access_token"]
 
+
+# ---------------- FX rates (free public API) ----------------
+FX_SOURCE = "open.er-api.com"
+FX_URL = "https://open.er-api.com/v6/latest/USD"
+FX_TTL_SECONDS = 60 * 60 * 12  # 12h cache
+
+
+async def fetch_usd_to_hnl() -> dict:
+    """Returns {rate, source, fetched_at}. Cached in db.fx_cache."""
+    cached = await db.fx_cache.find_one({"pair": "USD_HNL"}, {"_id": 0})
+    if cached:
+        try:
+            fetched = datetime.fromisoformat(cached["fetched_at"])
+            if fetched.tzinfo is None:
+                fetched = fetched.replace(tzinfo=timezone.utc)
+            if (datetime.now(timezone.utc) - fetched).total_seconds() < FX_TTL_SECONDS:
+                return cached
+        except Exception:
+            pass
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as cli:
+            r = await cli.get(FX_URL)
+        r.raise_for_status()
+        j = r.json()
+        rate = float((j.get("rates") or {}).get("HNL") or 0.0)
+        if rate <= 0:
+            raise ValueError("HNL rate missing")
+        doc = {
+            "pair": "USD_HNL",
+            "rate": round(rate, 4),
+            "source": FX_SOURCE,
+            "fetched_at": datetime.now(timezone.utc).isoformat(),
+        }
+        await db.fx_cache.update_one({"pair": "USD_HNL"}, {"$set": doc}, upsert=True)
+        return doc
+    except Exception as e:
+        logger.warning("FX fetch failed: %s", e)
+        if cached:
+            return cached
+        return {"pair": "USD_HNL", "rate": 24.5, "source": "fallback", "fetched_at": now_iso()}
+
+
+async def effective_usd_rate(biz: dict) -> tuple[float, str]:
+    """Returns (rate, source) considering auto_rate flag."""
+    if biz.get("auto_rate"):
+        fx = await fetch_usd_to_hnl()
+        return float(fx.get("rate") or 24.5), fx.get("source", "auto")
+    rate = float(biz.get("usd_rate") or 24.5)
+    if rate <= 0:
+        rate = 24.5
+    return rate, "manual"
+
 # ---------------- Object Storage ----------------
 STORAGE_BASE = (os.environ.get("INTEGRATION_PROXY_URL") or "").strip() or "https://integrations.emergentagent.com"
 STORAGE_URL = STORAGE_BASE.rstrip("/") + "/objstore/api/v1/storage"
@@ -133,7 +185,8 @@ class Business(BaseModel):
     website: Optional[str] = ""
     currency: str = "L"
     color: str = "#9D7A2A"
-    usd_rate: float = 24.5  # 1 USD = X Lempiras; used to convert local → USD for PayPal
+    usd_rate: float = 24.5  # 1 USD = X Lempiras; manual override
+    auto_rate: bool = False  # when True, use live FX rate instead of usd_rate
     created_at: str = Field(default_factory=now_iso)
 
 
@@ -151,6 +204,7 @@ class BusinessIn(BaseModel):
     currency: str = "L"
     color: str = "#9D7A2A"
     usd_rate: float = 24.5
+    auto_rate: bool = False
 
 
 class Product(BaseModel):
@@ -572,9 +626,7 @@ async def paypal_create_order(bid: str, sid: str, data: PayPalOrderIn, user: dic
 
     due_local = max(0.0, (sale.get("total", 0.0) - sale.get("paid", 0.0)))
     currency = (biz.get("currency") or "L").upper()
-    rate = float(biz.get("usd_rate") or 24.5)
-    if rate <= 0:
-        rate = 24.5
+    rate, rate_source = await effective_usd_rate(biz)
 
     # Decide USD amount
     if data.amount_usd and data.amount_usd > 0:
@@ -617,7 +669,7 @@ async def paypal_create_order(bid: str, sid: str, data: PayPalOrderIn, user: dic
         raise HTTPException(502, "PayPal: approve_url no encontrado")
     await db.sales.update_one(
         {"id": sid, "business_id": bid},
-        {"$set": {"paypal_order_id": order_id, "paypal_status": "created"}},
+        {"$set": {"paypal_order_id": order_id, "paypal_status": "created", "paypal_rate_used": rate}},
     )
     return {
         "order_id": order_id,
@@ -626,6 +678,7 @@ async def paypal_create_order(bid: str, sid: str, data: PayPalOrderIn, user: dic
         "due_local": round(due_local, 2),
         "currency": currency,
         "usd_rate": rate,
+        "rate_source": rate_source,
     }
 
 
@@ -673,9 +726,10 @@ async def paypal_capture(bid: str, sid: str, user: dict = Depends(get_current_us
         pass
 
     biz = await db.businesses.find_one({"id": bid}, {"_id": 0}) or {}
-    rate = float(biz.get("usd_rate") or 24.5)
+    # Prefer the exact rate used when creating this order (consistency guarantee)
+    rate = float(sale.get("paypal_rate_used") or 0.0)
     if rate <= 0:
-        rate = 24.5
+        rate, _ = await effective_usd_rate(biz)
     currency = (biz.get("currency") or "L").upper()
     captured_local = captured_value if currency == "USD" else round(captured_value * rate, 2)
 
@@ -764,6 +818,11 @@ async def dashboard(bid: str, user: dict = Depends(get_current_user)):
 @api_router.get("/")
 async def root():
     return {"message": "Mis Negocios API"}
+
+
+@api_router.get("/fx/usd-to-hnl")
+async def fx_usd_to_hnl(user: dict = Depends(get_current_user)):
+    return await fetch_usd_to_hnl()
 
 
 # ---------------- Files / Object Storage ----------------

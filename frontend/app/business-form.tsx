@@ -27,15 +27,26 @@ export default function BusinessForm() {
   const [form, setForm] = useState<any>({
     name: "", subtitle: "", logo: "", phone: "", email: "", address: "",
     facebook: "", instagram: "", tiktok: "", website: "", currency: "L", color: "#9D7A2A",
-    usd_rate: "24.50",
+    usd_rate: "24.50", auto_rate: false,
   });
 
   useEffect(() => {
-    if (existing) setForm({ ...existing, usd_rate: String(existing.usd_rate ?? 24.5) });
+    if (existing) setForm({
+      ...existing,
+      usd_rate: String(existing.usd_rate ?? 24.5),
+      auto_rate: !!existing.auto_rate,
+    });
   }, [existing]);
 
+  const { data: fx, refetch: refetchFx, isRefetching: fxLoading } = useQuery({
+    queryKey: ["fx-usd-hnl"],
+    queryFn: () => api.fxUsdHnl(),
+    enabled: form.currency === "L",
+    staleTime: 1000 * 60 * 10,
+  });
+
   const createMut = useMutation({
-    mutationFn: () => api.createBusiness({ ...form, usd_rate: parseFloat(form.usd_rate) || 24.5 }),
+    mutationFn: () => api.createBusiness({ ...form, usd_rate: parseFloat(form.usd_rate) || 24.5, auto_rate: !!form.auto_rate }),
     onSuccess: async (b) => {
       await qc.invalidateQueries({ queryKey: ["businesses"] });
       await switchBusiness(b.id);
@@ -44,7 +55,7 @@ export default function BusinessForm() {
   });
 
   const updateMut = useMutation({
-    mutationFn: () => api.updateBusiness(id!, { ...form, usd_rate: parseFloat(form.usd_rate) || 24.5 }),
+    mutationFn: () => api.updateBusiness(id!, { ...form, usd_rate: parseFloat(form.usd_rate) || 24.5, auto_rate: !!form.auto_rate }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["businesses"] });
       router.back();
@@ -137,18 +148,44 @@ export default function BusinessForm() {
         </View>
       </Field>
       {form.currency === "L" && (
-        <Field label="Tasa L → USD (1 USD = ? Lempiras)">
-          <TextInput
-            style={formStyles.input}
-            value={String(form.usd_rate)}
-            onChangeText={(v) => setForm({ ...form, usd_rate: v })}
-            keyboardType="decimal-pad"
-            placeholder="24.50"
-            placeholderTextColor={colors.muted}
-            testID="usd-rate"
-          />
-          <Text style={styles.hint}>Usada por PayPal para convertir el monto en Lempiras a USD al cobrar.</Text>
-        </Field>
+        <>
+          <Field label="Tasa L → USD (1 USD = ? Lempiras)">
+            <View style={styles.rateHeader}>
+              <Pressable
+                style={[styles.autoPill, form.auto_rate && styles.autoPillOn]}
+                onPress={() => setForm({ ...form, auto_rate: !form.auto_rate })}
+                testID="auto-rate-toggle"
+              >
+                <Ionicons name={form.auto_rate ? "flash" : "flash-outline"} size={14} color={form.auto_rate ? colors.onBrandPrimary : colors.brandPrimary} />
+                <Text style={[styles.autoPillTxt, form.auto_rate && { color: colors.onBrandPrimary }]}>
+                  {form.auto_rate ? "Automática activa" : "Automática"}
+                </Text>
+              </Pressable>
+              <Pressable onPress={() => refetchFx()} hitSlop={10} testID="fx-refresh">
+                <Ionicons name="refresh" size={18} color={colors.brandPrimary} />
+              </Pressable>
+            </View>
+            <TextInput
+              style={[formStyles.input, form.auto_rate && { opacity: 0.5 }]}
+              value={form.auto_rate ? (fx?.rate ? String(fx.rate) : "cargando...") : String(form.usd_rate)}
+              onChangeText={(v) => setForm({ ...form, usd_rate: v })}
+              keyboardType="decimal-pad"
+              placeholder="24.50"
+              placeholderTextColor={colors.muted}
+              editable={!form.auto_rate}
+              testID="usd-rate"
+            />
+            {form.auto_rate ? (
+              <Text style={styles.hint}>
+                {fx ? `Tasa de mercado: 1 USD = L ${Number(fx.rate).toFixed(2)} · fuente: ${fx.source}${fxLoading ? " (actualizando...)" : ""}` : "Obteniendo tasa..."}
+              </Text>
+            ) : (
+              <Text style={styles.hint}>
+                {fx ? `Mercado hoy: 1 USD = L ${Number(fx.rate).toFixed(2)}. ` : ""}Toca el chip para que la app actualice la tasa automáticamente.
+              </Text>
+            )}
+          </Field>
+        </>
       )}
       <Field label="Color principal">
         <View style={styles.colorsRow}>
@@ -187,4 +224,15 @@ const styles = StyleSheet.create({
   colorDot: { width: 36, height: 36, borderRadius: 18, borderWidth: 2, borderColor: "transparent" },
   colorActive: { borderColor: colors.onSurface },
   hint: { fontSize: 12, color: colors.muted, marginTop: spacing.xs, marginLeft: spacing.xs },
+  rateHeader: {
+    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+    marginBottom: spacing.xs,
+  },
+  autoPill: {
+    flexDirection: "row", alignItems: "center", gap: 4,
+    paddingHorizontal: spacing.sm, paddingVertical: 4, borderRadius: radius.pill,
+    backgroundColor: colors.brandTertiary,
+  },
+  autoPillOn: { backgroundColor: colors.brandPrimary },
+  autoPillTxt: { color: colors.brandPrimary, fontSize: 12, fontWeight: "600" },
 });
