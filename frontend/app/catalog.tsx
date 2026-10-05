@@ -116,6 +116,33 @@ export default function Catalog() {
     }
   };
 
+  const publicUrl = activeBusiness && activeId
+    ? `${(process.env.EXPO_PUBLIC_BACKEND_URL as string || "").replace(/\/$/, "")}/api/public/catalog/${activeId}`
+    : "";
+
+  const shareOnline = async () => {
+    if (!publicUrl) return;
+    const text = `Mira el catálogo de ${activeBusiness?.name || "nuestro negocio"} 🛍️\n${publicUrl}`;
+    try {
+      const waUrl = `https://wa.me/?text=${encodeURIComponent(text)}`;
+      const canOpen = await Linking.canOpenURL(waUrl);
+      if (canOpen) {
+        await Linking.openURL(waUrl);
+      } else if (Platform.OS === "web" && (navigator as any).share) {
+        await (navigator as any).share({ title: "Catálogo online", text, url: publicUrl });
+      } else {
+        await Share.share({ message: text });
+      }
+    } catch (e: any) {
+      Alert.alert("Error", e?.message || "No se pudo compartir");
+    }
+  };
+
+  const openOnline = async () => {
+    if (!publicUrl) return;
+    try { await Linking.openURL(publicUrl); } catch (e: any) { Alert.alert("Error", e?.message); }
+  };
+
   return (
     <View style={[styles.wrap, { paddingTop: insets.top }]}>
       <View style={styles.header}>
@@ -133,26 +160,41 @@ export default function Catalog() {
             El catálogo incluye encabezado con nombre, subtítulo y contactos del negocio, y una tarjeta por producto con foto, categoría, descripción y precio.
           </Text>
         </View>
+
+        <Text style={styles.sectionLabel}>Catálogo online</Text>
+        <View style={styles.urlBox}>
+          <Ionicons name="link" size={16} color={colors.muted} />
+          <Text style={styles.urlTxt} numberOfLines={1} selectable>{publicUrl}</Text>
+          <Pressable onPress={openOnline} hitSlop={8} testID="catalog-open-online">
+            <Ionicons name="open-outline" size={18} color={colors.brandPrimary} />
+          </Pressable>
+        </View>
+        <Pressable style={styles.waBtn} onPress={shareOnline} testID="catalog-share-online">
+          <Ionicons name="logo-whatsapp" size={20} color="#FFFFFF" />
+          <Text style={styles.waTxt}>Compartir enlace web por WhatsApp</Text>
+        </Pressable>
+        <Text style={styles.waHint}>
+          Tus clientes abren el enlace en el navegador, ven las fotos ampliadas y piden cada producto con un toque.
+        </Text>
+
+        <Text style={styles.sectionLabel}>Como archivo PDF</Text>
         <Pressable
-          style={[styles.waBtn, (sharingWa || isLoading) && { opacity: 0.6 }]}
+          style={[styles.waBtn, { backgroundColor: "#128C7E" }, (sharingWa || isLoading) && { opacity: 0.6 }]}
           onPress={shareWhatsapp}
           disabled={sharingWa || isLoading}
           testID="catalog-whatsapp"
         >
           {sharingWa ? <ActivityIndicator color="#FFFFFF" /> : <>
             <Ionicons name="logo-whatsapp" size={20} color="#FFFFFF" />
-            <Text style={styles.waTxt}>Compartir por WhatsApp</Text>
+            <Text style={styles.waTxt}>Enviar PDF por WhatsApp</Text>
           </>}
         </Pressable>
         <Pressable style={styles.cta} onPress={generate} disabled={generating || isLoading} testID="catalog-generate">
           {generating ? <ActivityIndicator color={colors.onBrandPrimary} /> : <>
             <Ionicons name="document-text" size={20} color={colors.onBrandPrimary} />
-            <Text style={styles.ctaTxt}>Generar y compartir PDF</Text>
+            <Text style={styles.ctaTxt}>Generar PDF</Text>
           </>}
         </Pressable>
-        <Text style={styles.waHint}>
-          "Compartir por WhatsApp" sube el PDF a la nube y envía el enlace para que tus clientes lo abran desde cualquier dispositivo.
-        </Text>
       </ScrollView>
     </View>
   );
@@ -184,5 +226,12 @@ const styles = StyleSheet.create({
     backgroundColor: "#25D366", paddingVertical: spacing.md, borderRadius: radius.pill, marginBottom: spacing.sm,
   },
   waTxt: { color: "#FFFFFF", fontWeight: "600", fontSize: 16 },
-  waHint: { fontSize: 12, color: colors.muted, textAlign: "center", marginTop: spacing.md, lineHeight: 17 },
+  waHint: { fontSize: 12, color: colors.muted, textAlign: "center", marginTop: spacing.sm, marginBottom: spacing.lg, lineHeight: 17 },
+  sectionLabel: { fontSize: 13, fontWeight: "600", color: colors.muted, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: spacing.sm, marginLeft: spacing.xs },
+  urlBox: {
+    flexDirection: "row", alignItems: "center", gap: spacing.sm,
+    backgroundColor: colors.surfaceSecondary, padding: spacing.md, borderRadius: radius.md,
+    marginBottom: spacing.sm,
+  },
+  urlTxt: { flex: 1, fontSize: 12, color: colors.onSurface },
 });

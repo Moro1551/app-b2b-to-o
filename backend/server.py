@@ -825,6 +825,174 @@ async def fx_usd_to_hnl(user: dict = Depends(get_current_user)):
     return await fetch_usd_to_hnl()
 
 
+# ---------------- Public catalog (no auth) ----------------
+def _html_escape(s) -> str:
+    return str(s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+
+
+def _resolve_photo(url: str, request_base: str) -> str:
+    if not url:
+        return ""
+    if url.startswith("http://") or url.startswith("https://"):
+        return url
+    if url.startswith("/api/"):
+        return f"{request_base}{url}"
+    if "/uploads/" in url:
+        return f"{request_base}/api/files/{url}"
+    return url
+
+
+@api_router.get("/public/catalog/{bid}")
+async def public_catalog(bid: str, request: Request):
+    biz = await db.businesses.find_one({"id": bid}, {"_id": 0})
+    if not biz:
+        raise HTTPException(404, "Catálogo no encontrado")
+    products = await db.products.find({"business_id": bid}, {"_id": 0}).sort("created_at", -1).to_list(500)
+
+    base = str(request.base_url).rstrip("/")
+    header_color = biz.get("color") or "#9D7A2A"
+    name = _html_escape(biz.get("name"))
+    subtitle = _html_escape(biz.get("subtitle"))
+    phone = (biz.get("phone") or "").strip()
+    phone_digits = "".join(c for c in phone if c.isdigit() or c == "+").lstrip("+")
+    currency_sym = "$" if (biz.get("currency") or "").upper() == "USD" else "L "
+    logo = _resolve_photo(biz.get("logo") or "", base)
+
+    def product_card(p):
+        photo = _resolve_photo((p.get("photos") or [""])[0], base) if p.get("photos") else ""
+        pname = _html_escape(p.get("name"))
+        pcat = _html_escape(p.get("category"))
+        pdesc = _html_escape(p.get("description"))
+        pprice = f"{currency_sym}{float(p.get('sale_price') or 0):,.2f}"
+        in_stock = (p.get("stock") or 0) > 0
+        wa_text = _html_escape(f"Hola, quiero pedir: {p.get('name')} ({pprice}).")
+        wa_href = f"https://wa.me/{phone_digits}?text={wa_text}" if phone_digits else f"https://wa.me/?text={wa_text}"
+        return f"""
+        <article class="card" data-full="{photo}" data-name="{pname}" data-desc="{pdesc}" data-price="{pprice}">
+          <div class="imgwrap">
+            {f'<img src="{photo}" alt="{pname}"/>' if photo else '<div class="noimg">Sin foto</div>'}
+            {'' if in_stock else '<span class="badge">Agotado</span>'}
+          </div>
+          <div class="info">
+            {f'<div class="cat">{pcat}</div>' if pcat else ''}
+            <div class="name">{pname}</div>
+            <div class="price">{pprice}</div>
+            <a class="wa" href="{wa_href}" target="_blank" rel="noopener">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M20.52 3.48A11.9 11.9 0 0012.04 0C5.5 0 .2 5.3.2 11.84a11.74 11.74 0 001.65 6l-1.75 6.38 6.54-1.71a11.86 11.86 0 005.4 1.37h.01c6.54 0 11.84-5.3 11.84-11.84 0-3.16-1.23-6.14-3.37-8.56zM12.05 21.6a9.76 9.76 0 01-4.96-1.36l-.36-.21-3.88 1.02 1.04-3.78-.23-.39A9.73 9.73 0 012.37 11.84c0-5.37 4.38-9.74 9.68-9.74 2.59 0 5.03 1.01 6.86 2.85a9.65 9.65 0 012.86 6.9c0 5.36-4.38 9.75-9.72 9.75z"/><path d="M17.4 14.4c-.3-.15-1.73-.86-2-.96-.27-.1-.47-.15-.67.15-.2.3-.76.96-.93 1.16-.17.2-.34.22-.63.07-.3-.15-1.26-.46-2.4-1.47-.9-.8-1.5-1.78-1.67-2.08-.17-.3-.02-.45.13-.6.14-.14.3-.35.44-.52.15-.17.2-.3.3-.5.1-.2.05-.37-.02-.52-.08-.15-.67-1.6-.92-2.2-.24-.58-.49-.5-.67-.5l-.57-.01c-.2 0-.52.07-.8.37-.27.3-1.04 1.02-1.04 2.5s1.06 2.9 1.21 3.1c.15.2 2.1 3.2 5.08 4.5.71.3 1.26.48 1.69.62.71.22 1.35.19 1.86.12.57-.08 1.73-.7 1.97-1.38.25-.68.25-1.26.17-1.38-.07-.12-.27-.2-.57-.35z"/></svg>
+              Pedir por WhatsApp
+            </a>
+          </div>
+        </article>
+        """
+
+    cards_html = "".join(product_card(p) for p in products) or '<p style="padding:40px;text-align:center;color:#8E8E93">Catálogo vacío</p>'
+
+    html = f"""<!DOCTYPE html><html lang="es"><head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>{name} · Catálogo</title>
+<meta property="og:title" content="{name} · Catálogo" />
+<meta property="og:description" content="{subtitle or 'Catálogo online'}" />
+<style>
+  :root {{ --brand: {header_color}; --surface: #FFFFFF; --muted: #8E8E93; --text:#1C1C1E; --border:#E5E5EA; }}
+  * {{ box-sizing: border-box; }}
+  body {{ margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; background: #F8F8FA; color: var(--text); }}
+  header {{ background: var(--brand); color: #fff; padding: 32px 20px; }}
+  .wrap {{ max-width: 980px; margin: 0 auto; }}
+  .brand {{ display: flex; align-items: center; gap: 14px; }}
+  .brand img {{ width: 56px; height: 56px; border-radius: 12px; object-fit: cover; background: rgba(255,255,255,0.2); }}
+  .brand .avatar {{ width: 56px; height: 56px; border-radius: 12px; background: rgba(255,255,255,0.2); display:flex; align-items:center; justify-content:center; font-weight:700; font-size:22px; }}
+  h1 {{ margin: 0; font-size: 24px; font-weight: 700; }}
+  .sub {{ font-size: 14px; opacity: 0.9; margin-top: 2px; }}
+  .contacts {{ margin-top: 14px; font-size: 13px; opacity: 0.95; display: flex; flex-wrap: wrap; gap: 10px 16px; }}
+  main {{ padding: 20px; }}
+  .grid {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; }}
+  .card {{ background: #fff; border: 1px solid var(--border); border-radius: 14px; overflow: hidden; cursor: pointer; transition: transform .15s ease, box-shadow .15s ease; }}
+  .card:hover {{ transform: translateY(-2px); box-shadow: 0 8px 20px rgba(0,0,0,0.06); }}
+  .imgwrap {{ position: relative; aspect-ratio: 1 / 1; background: #F2F2F7; }}
+  .imgwrap img {{ width: 100%; height: 100%; object-fit: cover; display: block; }}
+  .noimg {{ display:flex; align-items:center; justify-content:center; width:100%; height:100%; color: var(--muted); font-size: 13px; }}
+  .badge {{ position:absolute; top:8px; right:8px; background:#1C1C1E; color:#fff; padding:3px 8px; border-radius:999px; font-size:11px; }}
+  .info {{ padding: 10px 12px 12px; }}
+  .cat {{ font-size: 11px; color: var(--muted); margin-bottom: 2px; text-transform: uppercase; letter-spacing: .5px; }}
+  .name {{ font-size: 15px; font-weight: 600; }}
+  .price {{ font-size: 16px; font-weight: 700; color: var(--brand); margin: 4px 0 10px; }}
+  .wa {{ display:inline-flex; align-items:center; gap:6px; background:#25D366; color:#fff; padding:8px 12px; border-radius:999px; font-size:13px; font-weight:600; text-decoration:none; }}
+  .wa:hover {{ background:#20bd5a; }}
+  footer {{ padding: 20px; text-align:center; color: var(--muted); font-size: 12px; }}
+  /* Modal */
+  .modal {{ position: fixed; inset: 0; background: rgba(0,0,0,0.75); display:none; align-items:center; justify-content:center; padding: 20px; z-index: 100; }}
+  .modal.open {{ display: flex; }}
+  .mcard {{ max-width: 560px; width: 100%; background:#fff; border-radius:16px; overflow:hidden; max-height: 90vh; display:flex; flex-direction:column; }}
+  .mcard img {{ width: 100%; max-height: 60vh; object-fit: contain; background: #000; display:block; }}
+  .mbody {{ padding: 16px 20px 20px; overflow:auto; }}
+  .mclose {{ position:absolute; top:16px; right:20px; background:rgba(255,255,255,0.9); border:none; width:36px; height:36px; border-radius:50%; font-size:18px; cursor:pointer; }}
+  .mname {{ font-size: 20px; font-weight: 700; }}
+  .mprice {{ font-size: 20px; font-weight: 700; color: var(--brand); margin: 6px 0 10px; }}
+  .mdesc {{ color: #4A4A4A; font-size: 14px; line-height: 1.5; margin-bottom: 14px; white-space: pre-wrap; }}
+  .mwa {{ display:inline-flex; align-items:center; gap:8px; background:#25D366; color:#fff; padding:10px 16px; border-radius:999px; font-size:14px; font-weight:600; text-decoration:none; }}
+</style>
+</head><body>
+<header><div class="wrap">
+  <div class="brand">
+    {f'<img src="{logo}" alt="logo"/>' if logo else f'<div class="avatar">{name[:1]}</div>'}
+    <div>
+      <h1>{name}</h1>
+      {f'<div class="sub">{subtitle}</div>' if subtitle else ''}
+    </div>
+  </div>
+  <div class="contacts">
+    {f'<span>📞 {_html_escape(phone)}</span>' if phone else ''}
+    {f'<span>📧 {_html_escape(biz.get("email"))}</span>' if biz.get("email") else ''}
+    {f'<span>📍 {_html_escape(biz.get("address"))}</span>' if biz.get("address") else ''}
+    {f'<a style="color:#fff" href="https://{_html_escape(biz.get("website"))}" target="_blank">🌐 {_html_escape(biz.get("website"))}</a>' if biz.get("website") else ''}
+  </div>
+</div></header>
+<main><div class="wrap">
+  <div class="grid">{cards_html}</div>
+</div></main>
+<footer>Catálogo generado por Mis Negocios</footer>
+<div class="modal" id="modal" onclick="if(event.target===this)close_()">
+  <div class="mcard">
+    <img id="mimg" src="" alt=""/>
+    <div class="mbody">
+      <button class="mclose" onclick="close_()" aria-label="Cerrar">×</button>
+      <div class="mname" id="mname"></div>
+      <div class="mprice" id="mprice"></div>
+      <div class="mdesc" id="mdesc"></div>
+      <a id="mwa" class="mwa" target="_blank" rel="noopener">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M20.52 3.48A11.9 11.9 0 0012.04 0C5.5 0 .2 5.3.2 11.84a11.74 11.74 0 001.65 6l-1.75 6.38 6.54-1.71a11.86 11.86 0 005.4 1.37h.01c6.54 0 11.84-5.3 11.84-11.84 0-3.16-1.23-6.14-3.37-8.56z"/></svg>
+        Pedir por WhatsApp
+      </a>
+    </div>
+  </div>
+</div>
+<script>
+  const PHONE = {('"' + phone_digits + '"') if phone_digits else '""'};
+  document.querySelectorAll('.card').forEach(c => {{
+    c.addEventListener('click', e => {{
+      if (e.target.closest('.wa')) return;
+      const name = c.dataset.name || '';
+      const desc = c.dataset.desc || '';
+      const price = c.dataset.price || '';
+      const img = c.dataset.full || '';
+      document.getElementById('mname').textContent = name;
+      document.getElementById('mprice').textContent = price;
+      document.getElementById('mdesc').textContent = desc;
+      const mimg = document.getElementById('mimg');
+      if (img) {{ mimg.src = img; mimg.style.display='block'; }} else {{ mimg.style.display='none'; }}
+      const text = encodeURIComponent('Hola, quiero pedir: ' + name + ' (' + price + ').');
+      document.getElementById('mwa').href = 'https://wa.me/' + PHONE + '?text=' + text;
+      document.getElementById('modal').classList.add('open');
+    }});
+  }});
+  function close_() {{ document.getElementById('modal').classList.remove('open'); }}
+  document.addEventListener('keydown', e => {{ if (e.key === 'Escape') close_(); }});
+</script>
+</body></html>"""
+    return Response(content=html, media_type="text/html; charset=utf-8")
+
+
 # ---------------- Files / Object Storage ----------------
 ALLOWED_UPLOAD_TYPES = {
     "image/jpeg", "image/jpg", "image/png", "image/webp", "image/heic", "image/heif",
