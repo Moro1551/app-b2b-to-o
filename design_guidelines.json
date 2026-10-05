@@ -1,0 +1,169 @@
+{
+  "app_name": "Mis Negocios",
+  "personality": "1 iOS-Native Clean",
+  "personality_one_liner": "A sophisticated and clean management hub that elevates small business operations into a premium, highly functional experience.",
+  "color": {
+    "surface": "#FFFFFF",
+    "onSurface": "#1C1C1E",
+    "surfaceSecondary": "#F2F2F7",
+    "onSurfaceSecondary": "#1C1C1E",
+    "surfaceTertiary": "#E5E5EA",
+    "onSurfaceTertiary": "#1C1C1E",
+    "surfaceInverse": "#1C1C1E",
+    "onSurfaceInverse": "#FFFFFF",
+    "brand": "#C5A059",
+    "brandPrimary": "#9D7A2A",
+    "onBrandPrimary": "#FFFFFF",
+    "brandSecondary": "#E8DCC4",
+    "onBrandSecondary": "#4A3B18",
+    "brandTertiary": "#F5F0E6",
+    "onBrandTertiary": "#6B5624",
+    "success": "#34C759",
+    "onSuccess": "#FFFFFF",
+    "warning": "#FF9500",
+    "onWarning": "#FFFFFF",
+    "error": "#FF3B30",
+    "onError": "#FFFFFF",
+    "info": "#8E8E93",
+    "onInfo": "#FFFFFF",
+    "border": "#E5E5EA",
+    "borderStrong": "#C7C7CC",
+    "divider": "#E5E5EA",
+    "muted": "#8E8E93",
+    "onBrand": "#1C1C1E"
+  },
+  "typography": {
+    "displayFontFamily": "Plus Jakarta Sans",
+    "textFontFamily": "Plus Jakarta Sans",
+    "scale": {
+      "sm": 12,
+      "base": 14,
+      "lg": 16,
+      "xl": 20,
+      "2xl": 24
+    }
+  },
+  "spacing": {
+    "rule": "Generous iOS-native vertical spacing. Components should breathe. Cards must not be flush to the edge.",
+    "xs": 4,
+    "sm": 8,
+    "md": 12,
+    "lg": 16,
+    "xl": 24,
+    "2xl": 32,
+    "3xl": 48
+  },
+  "radius_tokens": {
+    "sm": 6,
+    "md": 12,
+    "lg": 20,
+    "pill": 999
+  },
+  "shadow_tier": "1",
+  "navigation": "bottom_tabs",
+  "icon_set": "Ionicons",
+  "glassmorphism": {
+    "enabled": "true",
+    "do's": [
+      "Use glassmorphism on the bottom tab bar.",
+      "Use glassmorphism on sticky headers over scrolling content (e.g., Inventory list).",
+      "Use glassmorphism on the bottom sheet header/drag handle for the Multi-business switcher."
+    ],
+    "dont's": [
+      "Never blur form fields or body text regions.",
+      "Do not use glass on every card or list row."
+    ]
+  },
+  "platform_libraries": {
+    "glass": {
+      "ios": "expo-glass-effect",
+      "android": "expo-blur",
+      "low_end_android_fallback": "solid surfaceSecondary"
+    },
+    "image": "expo-image",
+    "blur": "expo-blur",
+    "bottom_sheet": "@gorhom/bottom-sheet",
+    "animation": "react-native-reanimated",
+    "gesture": "react-native-gesture-handler"
+  },
+  "screens": [
+    {
+      "name": "Inicio (Dashboard)",
+      "purpose": "Quick overview of today's sales, active business, and urgent alerts like low stock.",
+      "states": {
+        "loading": "Centered spinner with a subtle brand tint.",
+        "empty": "Illustration of a minimal workspace with a prompt to record the first sale.",
+        "error": "Readable message ('Error al cargar datos') with a Retry button."
+      },
+      "layout": "Header contains the Multi-business switcher (Dropdown pattern: Avatar + Name + Chevron). Below: Hero card for 'Ventas de Hoy' (Today's Sales) using a soft brandTertiary gradient. Followed by a horizontal scroll of 'Acciones Rápidas' (Nueva Venta, Nuevo Gasto). Bottom section: 'Alertas' (Low stock items) in a stacked list format with red/warning status dots."
+    },
+    {
+      "name": "Inventario",
+      "purpose": "Manage products, track stock, and generate catalog.",
+      "states": {
+        "loading": "Skeleton loader matching the product grid layout.",
+        "empty": "Empty box illustration + 'No hay productos en este negocio' + Primary CTA '+ Añadir Producto'.",
+        "error": "Readable message with a Retry button."
+      },
+      "layout": "Sticky top search bar with a glass background. Below: Segmented control (Todos, Bajo Stock). Main content: 2-column grid for products (Photo, Name, Price, Stock Badge). Floating Action Button (FAB) at bottom right for adding a product. Use a gradient scrim on product images if text is overlaid."
+    },
+    {
+      "name": "Clientes",
+      "purpose": "CRM listing with WhatsApp integration and purchase history.",
+      "states": {
+        "loading": "Skeleton loader for list rows.",
+        "empty": "Minimal contact illustration + 'No hay clientes registrados' + Primary CTA.",
+        "error": "Readable message with a Retry button."
+      },
+      "layout": "Standard iOS grouped list. Each row has an initials avatar (or photo), Name, and 'Última compra' date. Trailing icon is a WhatsApp button. Tapping the row opens a full-screen profile (Detail cover banner, notes, purchase history)."
+    },
+    {
+      "name": "Más (Settings & Finances)",
+      "purpose": "Access to business profile, financial reports, and PDF catalog generation.",
+      "states": {
+        "loading": "Spinner.",
+        "empty": "Not applicable for settings index.",
+        "error": "Readable message with a Retry button."
+      },
+      "layout": "iOS-style grouped list sections. Section 1: Perfil del Negocio (Name, Logo, Currency, Color). Section 2: Finanzas (Ingresos, Egresos, Capital). Section 3: Catálogo PDF. Use brandTertiary tinted icon containers for row icons."
+    }
+  ],
+  "images": {
+    "argentea_logo": {
+      "url": "https://images.unsplash.com/photo-1605100804763-247f67b3557e?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDQ2Mzl8MHwxfHNlYXJjaHwxfHxzaWx2ZXIlMjA5MjUlMjBqZXdlbHJ5JTIwcmluZ3xlbnwwfHx8fDE3OTExODE1MjN8MA&ixlib=rb-4.1.0&q=85",
+      "alt": "ARGENTEA silver jewelry ring placeholder"
+    },
+    "courier_logo": {
+      "url": "https://images.unsplash.com/photo-1656543802898-41c8c46683a7?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjY2NzZ8MHwxfHNlYXJjaHwxfHxjYXJkYm9hcmQlMjBzaGlwcGluZyUyMGJveCUyMHBhcmNlbHxlbnwwfHx8fDE3OTExODE1MjN8MA&ixlib=rb-4.1.0&q=85",
+      "alt": "Courier cardboard box placeholder"
+    },
+    "dashboard_empty": {
+      "url": "https://images.unsplash.com/photo-1542435503-956c469947f6?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAxODF8MHwxfHNlYXJjaHwyfHxlbGVnYW50JTIwbWluaW1hbCUyMHdvcmtzcGFjZSUyMGRlc2slMjBmbGF0bGF5fGVufDB8fHx8MTc5MTE4MTUyM3ww&ixlib=rb-4.1.0&q=85",
+      "alt": "Elegant minimal workspace flatlay"
+    },
+    "inventory_empty": {
+      "url": "https://images.unsplash.com/photo-1617360547704-3da8b5363369?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2Njl8MHwxfHNlYXJjaHwxfHxlbXB0eSUyMGJveCUyMHNpbXBsZSUyMG1pbmltYWx8ZW58MHx8fHwxNzkxMTgxNTIzfDA&ixlib=rb-4.1.0&q=85",
+      "alt": "Empty minimal box"
+    },
+    "product_placeholder": {
+      "url": "https://images.unsplash.com/photo-1611652022419-a9419f74343d?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDk1Nzl8MHwxfHNlYXJjaHwxfHxzaWx2ZXIlMjBuZWNrbGFjZSUyMGVsZWdhbnR8ZW58MHx8fHwxNzkxMTgxNTIzfDA&ixlib=rb-4.1.0&q=85",
+      "alt": "Elegant silver necklace"
+    }
+  },
+  "haptics": {
+    "tab_press": "light",
+    "business_switch": "medium",
+    "add_product_success": "success",
+    "delete_item_warning": "warning",
+    "primary_button_press": "light"
+  },
+  "instructions_to_main_agent": [
+    "Implement a Top-bar Dropdown pattern for the Multi-business switcher: Avatar/Logo + Active Business Name + Chevron Down. Tapping it opens a @gorhom/bottom-sheet listing available businesses.",
+    "The app primarily targets iOS-Native Clean with an elegant champagne/gold palette. Ensure high contrast for text over gold (use the defined deep gold brandPrimary #9D7A2A to keep WCAG contrast intact).",
+    "For the Inventory grid, ensure a 2-column layout using flexWrap: 'wrap' and justifyContent: 'space-between' with dynamic width calculations. Do not leave single items orphaned with full width in a 2-col row.",
+    "Use glassmorphism (expo-glass-effect or expo-blur) extensively for sticky headers, the bottom tab bar, and the business switcher bottom sheet.",
+    "Any text overlaid on product images MUST include a top-to-bottom linear gradient scrim (transparent to surfaceInverse) to guarantee readability.",
+    "Always incorporate Loading/Empty/Error states for the main data screens (Inicio, Inventario, Clientes). Utilize the provided empty-state images.",
+    "Keep standard iOS spacing metrics and font weight discipline (no heavier than 500). Let Plus Jakarta Sans size drive the visual hierarchy."
+  ]
+}
