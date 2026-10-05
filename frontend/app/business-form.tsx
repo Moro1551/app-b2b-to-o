@@ -27,14 +27,15 @@ export default function BusinessForm() {
   const [form, setForm] = useState<any>({
     name: "", subtitle: "", logo: "", phone: "", email: "", address: "",
     facebook: "", instagram: "", tiktok: "", website: "", currency: "L", color: "#9D7A2A",
+    usd_rate: "24.50",
   });
 
   useEffect(() => {
-    if (existing) setForm({ ...existing });
+    if (existing) setForm({ ...existing, usd_rate: String(existing.usd_rate ?? 24.5) });
   }, [existing]);
 
   const createMut = useMutation({
-    mutationFn: () => api.createBusiness(form),
+    mutationFn: () => api.createBusiness({ ...form, usd_rate: parseFloat(form.usd_rate) || 24.5 }),
     onSuccess: async (b) => {
       await qc.invalidateQueries({ queryKey: ["businesses"] });
       await switchBusiness(b.id);
@@ -43,7 +44,7 @@ export default function BusinessForm() {
   });
 
   const updateMut = useMutation({
-    mutationFn: () => api.updateBusiness(id!, form),
+    mutationFn: () => api.updateBusiness(id!, { ...form, usd_rate: parseFloat(form.usd_rate) || 24.5 }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["businesses"] });
       router.back();
@@ -135,6 +136,20 @@ export default function BusinessForm() {
           ))}
         </View>
       </Field>
+      {form.currency === "L" && (
+        <Field label="Tasa L → USD (1 USD = ? Lempiras)">
+          <TextInput
+            style={formStyles.input}
+            value={String(form.usd_rate)}
+            onChangeText={(v) => setForm({ ...form, usd_rate: v })}
+            keyboardType="decimal-pad"
+            placeholder="24.50"
+            placeholderTextColor={colors.muted}
+            testID="usd-rate"
+          />
+          <Text style={styles.hint}>Usada por PayPal para convertir el monto en Lempiras a USD al cobrar.</Text>
+        </Field>
+      )}
       <Field label="Color principal">
         <View style={styles.colorsRow}>
           {["#9D7A2A", "#1F2937", "#B91C1C", "#1D4ED8", "#15803D", "#7C3AED"].map((c) => (
@@ -171,4 +186,5 @@ const styles = StyleSheet.create({
   colorsRow: { flexDirection: "row", gap: spacing.sm, flexWrap: "wrap" },
   colorDot: { width: 36, height: 36, borderRadius: 18, borderWidth: 2, borderColor: "transparent" },
   colorActive: { borderColor: colors.onSurface },
+  hint: { fontSize: 12, color: colors.muted, marginTop: spacing.xs, marginLeft: spacing.xs },
 });

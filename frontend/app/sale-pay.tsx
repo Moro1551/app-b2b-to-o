@@ -19,6 +19,7 @@ export default function SalePay() {
   const { activeId, activeBusiness } = useBusiness();
   const [loadingAction, setLoadingAction] = useState<string | null>(null);
   const [amountUsd, setAmountUsd] = useState<string>("");
+  const [conversion, setConversion] = useState<{ amount_usd: number; usd_rate: number; currency: string } | null>(null);
 
   const { data: sales = [], isLoading } = useQuery({
     queryKey: ["sales", activeId],
@@ -28,11 +29,15 @@ export default function SalePay() {
   const sale = sales.find((s: any) => s.id === id);
 
   useEffect(() => {
-    if (sale) {
+    if (sale && activeBusiness) {
       const due = Math.max(0, (sale.total || 0) - (sale.paid || 0));
-      setAmountUsd(due.toFixed(2));
+      const rate = Number(activeBusiness.usd_rate) || 24.5;
+      const curr = (activeBusiness.currency || "L").toUpperCase();
+      const usd = curr === "USD" ? due : due / rate;
+      setAmountUsd(usd.toFixed(2));
+      setConversion({ amount_usd: Number(usd.toFixed(2)), usd_rate: rate, currency: curr });
     }
-  }, [sale?.id, sale?.paid, sale?.total]);
+  }, [sale?.id, sale?.paid, sale?.total, activeBusiness?.usd_rate, activeBusiness?.currency]);
 
   const currency = activeBusiness?.currency || "L";
   const due = sale ? Math.max(0, (sale.total || 0) - (sale.paid || 0)) : 0;
@@ -194,6 +199,11 @@ export default function SalePay() {
                 </View>
               </View>
               <Text style={styles.ppAmount}>USD {parseFloat(amountUsd || "0").toFixed(2)}</Text>
+              {conversion && conversion.currency === "L" && (
+                <Text style={styles.ppRate}>
+                  Convertido de {formatMoney(due, "L")} a tasa 1 USD = L {conversion.usd_rate.toFixed(2)}
+                </Text>
+              )}
 
               <Pressable
                 style={[styles.btnPrimary, loadingAction === "pay" && { opacity: 0.6 }]}
@@ -278,6 +288,7 @@ const styles = StyleSheet.create({
   ppTitle: { fontSize: 15, fontWeight: "600", color: colors.onSurface },
   ppSub: { fontSize: 12, color: colors.muted, marginTop: 2 },
   ppAmount: { fontSize: 28, fontWeight: "700", color: colors.onSurface, marginVertical: spacing.sm },
+  ppRate: { fontSize: 12, color: colors.muted, marginTop: -spacing.xs, marginBottom: spacing.sm },
   btnPrimary: {
     flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm,
     backgroundColor: "#0070BA", paddingVertical: spacing.md, borderRadius: radius.pill,

@@ -133,6 +133,7 @@ class Business(BaseModel):
     website: Optional[str] = ""
     currency: str = "L"
     color: str = "#9D7A2A"
+    usd_rate: float = 24.5  # 1 USD = X Lempiras; used to convert local → USD for PayPal
     created_at: str = Field(default_factory=now_iso)
 
 
@@ -149,6 +150,7 @@ class BusinessIn(BaseModel):
     website: Optional[str] = ""
     currency: str = "L"
     color: str = "#9D7A2A"
+    usd_rate: float = 24.5
 
 
 class Product(BaseModel):
@@ -563,23 +565,38 @@ class PayPalOrderIn(BaseModel):
 
 @api_router.post("/businesses/{bid}/sales/{sid}/paypal/order")
 async def paypal_create_order(bid: str, sid: str, data: PayPalOrderIn, user: dict = Depends(get_current_user)):
-    await require_business(bid, user)
+    biz = await require_business(bid, user)
     sale = await db.sales.find_one({"id": sid, "business_id": bid}, {"_id": 0})
     if not sale:
         raise HTTPException(404, "Venta no encontrada")
-    due = (data.amount_usd if data.amount_usd and data.amount_usd > 0 else max(0.0, (sale.get("total", 0.0) - sale.get("paid", 0.0))))
-    if due <= 0:
+
+    due_local = max(0.0, (sale.get("total", 0.0) - sale.get("paid", 0.0)))
+    currency = (biz.get("currency") or "L").upper()
+    rate = float(biz.get("usd_rate") or 24.5)
+    if rate <= 0:
+        rate = 24.5
+
+    # Decide USD amount
+    if data.amount_usd and data.amount_usd > 0:
+        due_usd = float(data.amount_usd)
+    elif currency == "USD":
+        due_usd = due_local
+    else:
+        due_usd = round(due_local / rate, 2)
+
+    if due_usd <= 0:
         raise HTTPException(400, "La venta ya está pagada")
+
     token = await paypal_token()
     payload = {
         "intent": "CAPTURE",
         "purchase_units": [{
             "reference_id": sid,
             "description": f"Venta #{sid[:8]}",
-            "amount": {"currency_code": "USD", "value": f"{due:.2f}"},
+            "amount": {"currency_code": "USD", "value": f"{due_usd:.2f}"},
         }],
         "application_context": {
-            "brand_name": "Mis Negocios",
+            "brand_name": biz.get("name") or "Mis Negocios",
             "user_action": "PAY_NOW",
             "return_url": data.return_url,
             "cancel_url": data.cancel_url or data.return_url,
@@ -602,7 +619,14 @@ async def paypal_create_order(bid: str, sid: str, data: PayPalOrderIn, user: dic
         {"id": sid, "business_id": bid},
         {"$set": {"paypal_order_id": order_id, "paypal_status": "created"}},
     )
-    return {"order_id": order_id, "approve_url": approve_url, "amount_usd": round(due, 2)}
+    return {
+        "order_id": order_id,
+        "approve_url": approve_url,
+        "amount_usd": round(due_usd, 2),
+        "due_local": round(due_local, 2),
+        "currency": currency,
+        "usd_rate": rate,
+    }
 
 
 @api_router.post("/businesses/{bid}/sales/{sid}/paypal/capture")
@@ -648,21 +672,32 @@ async def paypal_capture(bid: str, sid: str, user: dict = Depends(get_current_us
     except Exception:
         pass
 
+    biz = await db.businesses.find_one({"id": bid}, {"_id": 0}) or {}
+    rate = float(biz.get("usd_rate") or 24.5)
+    if rate <= 0:
+        rate = 24.5
+    currency = (biz.get("currency") or "L").upper()
+    captured_local = captured_value if currency == "USD" else round(captured_value * rate, 2)
+
     paid_before = float(sale.get("paid", 0.0))
     if status.upper() == "COMPLETED":
-        new_paid = paid_before + captured_value
+        new_paid = round(paid_before + captured_local, 2)
         await db.sales.update_one(
             {"id": sid, "business_id": bid},
             {"$set": {"paid": new_paid, "paypal_status": "captured"}},
         )
-        # Record ingreso tx (converted; stored at captured USD amount with note)
         tx = Transaction(
             business_id=bid, type="ingreso", category="PayPal",
-            amount=captured_value,
-            description=f"PayPal capture venta #{sid[:8]} (USD {captured_value:.2f})",
+            amount=captured_local,
+            description=f"PayPal venta #{sid[:8]} (USD {captured_value:.2f} @ {rate:.2f})",
         )
         await db.transactions.insert_one(tx.dict())
-        return {"ok": True, "status": status, "captured_usd": captured_value, "paid": new_paid}
+        return {
+            "ok": True, "status": status,
+            "captured_usd": captured_value,
+            "captured_local": captured_local,
+            "paid": new_paid,
+        }
 
     await db.sales.update_one(
         {"id": sid, "business_id": bid},
