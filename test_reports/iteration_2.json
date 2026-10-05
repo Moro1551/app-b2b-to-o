@@ -1,0 +1,35 @@
+{
+  "summary": "Frontend-only testing of bug fix for 'Error al ejecutar insertBefore en Node' (DOM/web error) when creating/editing businesses on web preview. Verified the fix across all 3 flows: (1) FIRST business creation from /onboarding -> /business-form -> Guardar -> redirected to /(tabs) with ARGENTEA active in top switcher; (2) SECOND business creation from /business-form while on tabs -> saved -> redirected to /(tabs); (3) EDIT existing business via /business-form?id=XXX -> saved. In ALL THREE flows: ZERO `insertBefore` errors in page errors AND zero in console errors. Fix is confirmed working. Also verified: auto_rate chip 'Automática' toggles correctly (manual=24.50, auto fetched=26.8995 from /api/fx/usd-hnl), Lempiras rate field only visible when currency='L' (hidden when currency='USD', shown again on switch back). Authentication was bypassed by seeding a user+user_sessions row in MongoDB test_database per /app/memory/test_credentials.md and setting localStorage.mn_session_token before load (AuthProvider on web calls /api/auth/me with the stored token). Test data cleaned up after run.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {"component": "react-native-web deprecation (shadow props)", "issue": "Console warning: '\"shadow*\" style props are deprecated. Use \"boxShadow\".' observed after form save. Not blocking, but should migrate shadow* -> boxShadow in StyleSheets for RN 0.80+/RNW compatibility. Not caused by this fix - pre-existing."},
+      {"component": "react-native-web deprecation (pointerEvents)", "issue": "Console warning: 'props.pointerEvents is deprecated. Use style.pointerEvents' - likely from gesture-handler or bottom-sheet modal. Pre-existing, not blocking."},
+      {"component": "business-form edit flow (router.back on deep link)", "issue": "When /business-form?id=XXX is opened directly (no prior history), router.back() in updateMut.onSuccess logs 'The action GO_BACK was not handled by any navigator'. In real user flow (More tab -> business list -> edit) history exists so this is OK, but consider router.replace('/(tabs)') as a safer fallback. Reference: /app/frontend/app/business-form.tsx:63"}
+    ]
+  },
+  "test_report_links": [
+    "/app/test_reports/iteration_2.json"
+  ],
+  "action_items": [
+    "(Optional/minor) In business-form.tsx updateMut.onSuccess, consider replacing router.back() with a safer navigation (e.g., router.replace('/(tabs)') or canGoBack check) so deep-linked edit URLs don't log a GO_BACK warning. Not blocking the reported bug.",
+    "(Optional/pre-existing) Migrate deprecated RN style props: shadow* -> boxShadow, props.pointerEvents -> style.pointerEvents. Not related to this fix."
+  ],
+  "critical_code_review_comments": [
+    "Fix in business-form.tsx is sound: removed chained switchBusiness+navigation (which caused simultaneous invalidateQueries + stack replace in same microtask on react-native-web, leading to insertBefore DOM errors). setTimeout(0) defers navigation past React reconciliation. BusinessProvider's auto-select effect (/app/frontend/src/business-context.tsx:48-63) correctly picks up the new/first business once /api/businesses refetches, so UX is preserved.",
+    "Conditional 'Tasa L -> USD' field is now rendered as a single conditional block (no sibling fragment issue). Verified visibility toggle on currency switch works clean."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "not tested in this iteration (was 100% in iteration_1)", "frontend": "100% (3/3 flows, no insertBefore errors; auto_rate + currency conditional verified)"},
+  "seed_data_creation": "Seeded 1 user (user_qa_ae00d8de) + 1 user_sessions row in MongoDB test_database (as per /app/memory/test_credentials.md). Created 2 test businesses via UI (ARGENTEA, SEGUNDO NEG) and 1 edit. All data cleaned up post-test (businesses=2, sessions=1, users=1 removed).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "To test auth-gated frontend flows: seed user + user_sessions in MongoDB test_database (see /app/memory/test_credentials.md), then page.goto(/) and page.evaluate(`localStorage.setItem('mn_session_token','<token>')`) BEFORE a second goto. AuthProvider (web branch) on mount calls /api/auth/me with the token and sets user. The AuthGate then permits /onboarding or /(tabs) based on business list. Capture page.on('pageerror') AND page.on('console') to catch react-native-web DOM errors (insertBefore). The business-form screen uses FormScreen component which renders a 'Guardar' button with testID='form-save'. The onboarding entry is testID='onboarding-create'. Business switcher chip in dashboard shows active business name. Pre-existing RN warnings (shadow*, pointerEvents) are noise, filter them out when hunting for real errors.",
+  "rca_of_issue": "Original 'insertBefore' error root cause: in createMut.onSuccess the code called await switchBusiness(id) which synchronously invalidated ALL queries, then IMMEDIATELY called router.replace('/(tabs)'), causing react-native-web to reconcile a tree where parent containers were being unmounted (navigation stack transition) while child portals/modals were still mounting newly-fetched data - the DOM mutation order mismatched between React and the actual DOM, triggering 'Failed to execute insertBefore on Node'. Fix: (1) removed redundant switchBusiness - BusinessProvider has an auto-select effect that picks the first business when activeId is null; (2) wrapped router.replace/back in setTimeout(_, 0) to defer navigation past the current reconciliation flush; (3) collapsed sibling fragment/ternary <Text> nodes in the conditional Tasa L->USD field to a single conditional block avoiding keyless sibling reorder on toggle. Verification: created 2 businesses + 1 edit, zero insertBefore errors in page errors or console errors, flows end on /(tabs) with correct active business."
+}

@@ -15,7 +15,7 @@ export default function BusinessForm() {
   const { id } = useLocalSearchParams<{ id?: string }>();
   const router = useRouter();
   const qc = useQueryClient();
-  const { switchBusiness, businesses } = useBusiness();
+  const { businesses } = useBusiness();
   const isEdit = !!id;
 
   const { data: existing } = useQuery({
@@ -47,10 +47,12 @@ export default function BusinessForm() {
 
   const createMut = useMutation({
     mutationFn: () => api.createBusiness({ ...form, usd_rate: parseFloat(form.usd_rate) || 24.5, auto_rate: !!form.auto_rate }),
-    onSuccess: async (b) => {
-      await qc.invalidateQueries({ queryKey: ["businesses"] });
-      await switchBusiness(b.id);
-      router.replace("/(tabs)");
+    onSuccess: () => {
+      // BusinessProvider's auto-select effect picks up the new business via the
+      // refetched businesses list. Avoid chaining switchBusiness + navigation in
+      // the same microtask on react-native-web (causes insertBefore DOM errors).
+      qc.invalidateQueries({ queryKey: ["businesses"] });
+      setTimeout(() => router.replace("/(tabs)"), 0);
     },
   });
 
@@ -58,16 +60,16 @@ export default function BusinessForm() {
     mutationFn: () => api.updateBusiness(id!, { ...form, usd_rate: parseFloat(form.usd_rate) || 24.5, auto_rate: !!form.auto_rate }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["businesses"] });
-      router.back();
+      setTimeout(() => router.back(), 0);
     },
   });
 
   const deleteMut = useMutation({
     mutationFn: () => api.deleteBusiness(id!),
-    onSuccess: async () => {
-      await qc.invalidateQueries();
-      if (businesses.length <= 1) router.replace("/onboarding");
-      else router.replace("/(tabs)");
+    onSuccess: () => {
+      const target = businesses.length <= 1 ? "/onboarding" : "/(tabs)";
+      qc.invalidateQueries();
+      setTimeout(() => router.replace(target), 0);
     },
   });
 
@@ -148,44 +150,38 @@ export default function BusinessForm() {
         </View>
       </Field>
       {form.currency === "L" && (
-        <>
-          <Field label="Tasa L → USD (1 USD = ? Lempiras)">
-            <View style={styles.rateHeader}>
-              <Pressable
-                style={[styles.autoPill, form.auto_rate && styles.autoPillOn]}
-                onPress={() => setForm({ ...form, auto_rate: !form.auto_rate })}
-                testID="auto-rate-toggle"
-              >
-                <Ionicons name={form.auto_rate ? "flash" : "flash-outline"} size={14} color={form.auto_rate ? colors.onBrandPrimary : colors.brandPrimary} />
-                <Text style={[styles.autoPillTxt, form.auto_rate && { color: colors.onBrandPrimary }]}>
-                  {form.auto_rate ? "Automática activa" : "Automática"}
-                </Text>
-              </Pressable>
-              <Pressable onPress={() => refetchFx()} hitSlop={10} testID="fx-refresh">
-                <Ionicons name="refresh" size={18} color={colors.brandPrimary} />
-              </Pressable>
-            </View>
-            <TextInput
-              style={[formStyles.input, form.auto_rate && { opacity: 0.5 }]}
-              value={form.auto_rate ? (fx?.rate ? String(fx.rate) : "cargando...") : String(form.usd_rate)}
-              onChangeText={(v) => setForm({ ...form, usd_rate: v })}
-              keyboardType="decimal-pad"
-              placeholder="24.50"
-              placeholderTextColor={colors.muted}
-              editable={!form.auto_rate}
-              testID="usd-rate"
-            />
-            {form.auto_rate ? (
-              <Text style={styles.hint}>
-                {fx ? `Tasa de mercado: 1 USD = L ${Number(fx.rate).toFixed(2)} · fuente: ${fx.source}${fxLoading ? " (actualizando...)" : ""}` : "Obteniendo tasa..."}
+        <Field label="Tasa L → USD (1 USD = ? Lempiras)">
+          <View style={styles.rateHeader}>
+            <Pressable
+              style={[styles.autoPill, form.auto_rate && styles.autoPillOn]}
+              onPress={() => setForm({ ...form, auto_rate: !form.auto_rate })}
+              testID="auto-rate-toggle"
+            >
+              <Ionicons name={form.auto_rate ? "flash" : "flash-outline"} size={14} color={form.auto_rate ? colors.onBrandPrimary : colors.brandPrimary} />
+              <Text style={[styles.autoPillTxt, form.auto_rate && { color: colors.onBrandPrimary }]}>
+                {form.auto_rate ? "Automática activa" : "Automática"}
               </Text>
-            ) : (
-              <Text style={styles.hint}>
-                {fx ? `Mercado hoy: 1 USD = L ${Number(fx.rate).toFixed(2)}. ` : ""}Toca el chip para que la app actualice la tasa automáticamente.
-              </Text>
-            )}
-          </Field>
-        </>
+            </Pressable>
+            <Pressable onPress={() => refetchFx()} hitSlop={10} testID="fx-refresh">
+              <Ionicons name="refresh" size={18} color={colors.brandPrimary} />
+            </Pressable>
+          </View>
+          <TextInput
+            style={[formStyles.input, form.auto_rate && { opacity: 0.5 }]}
+            value={form.auto_rate ? (fx?.rate ? String(fx.rate) : "cargando...") : String(form.usd_rate)}
+            onChangeText={(v) => setForm({ ...form, usd_rate: v })}
+            keyboardType="decimal-pad"
+            placeholder="24.50"
+            placeholderTextColor={colors.muted}
+            editable={!form.auto_rate}
+            testID="usd-rate"
+          />
+          <Text style={styles.hint}>
+            {form.auto_rate
+              ? (fx ? `Tasa de mercado: 1 USD = L ${Number(fx.rate).toFixed(2)} · fuente: ${fx.source}${fxLoading ? " (actualizando...)" : ""}` : "Obteniendo tasa...")
+              : `${fx ? `Mercado hoy: 1 USD = L ${Number(fx.rate).toFixed(2)}. ` : ""}Toca el chip para que la app actualice la tasa automáticamente.`}
+          </Text>
+        </Field>
       )}
       <Field label="Color principal">
         <View style={styles.colorsRow}>
