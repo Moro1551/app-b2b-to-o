@@ -862,13 +862,14 @@ async def public_catalog(bid: str, request: Request):
         photo = _resolve_photo((p.get("photos") or [""])[0], base) if p.get("photos") else ""
         pname = _html_escape(p.get("name"))
         pcat = _html_escape(p.get("category"))
+        pcat_slug = (p.get("category") or "").strip().lower() or "sin-categoria"
         pdesc = _html_escape(p.get("description"))
         pprice = f"{currency_sym}{float(p.get('sale_price') or 0):,.2f}"
         in_stock = (p.get("stock") or 0) > 0
         wa_text = _html_escape(f"Hola, quiero pedir: {p.get('name')} ({pprice}).")
         wa_href = f"https://wa.me/{phone_digits}?text={wa_text}" if phone_digits else f"https://wa.me/?text={wa_text}"
         return f"""
-        <article class="card" data-full="{photo}" data-name="{pname}" data-desc="{pdesc}" data-price="{pprice}">
+        <article class="card" data-category="{_html_escape(pcat_slug)}" data-full="{photo}" data-name="{pname}" data-desc="{pdesc}" data-price="{pprice}">
           <div class="imgwrap">
             {f'<img src="{photo}" alt="{pname}"/>' if photo else '<div class="noimg">Sin foto</div>'}
             {'' if in_stock else '<span class="badge">Agotado</span>'}
@@ -885,7 +886,18 @@ async def public_catalog(bid: str, request: Request):
         </article>
         """
 
-    cards_html = "".join(product_card(p) for p in products) or '<p style="padding:40px;text-align:center;color:#8E8E93">Catálogo vacío</p>'
+    cards_html = "".join(product_card(p) for p in products) or '<p id="empty" style="padding:40px;text-align:center;color:#8E8E93">Catálogo vacío</p>'
+
+    # Build category chips preserving order of appearance
+    seen = []
+    for p in products:
+        c = (p.get("category") or "").strip()
+        if c and c not in seen:
+            seen.append(c)
+    def _slug(s): return s.strip().lower()
+    chips_html = '<button class="chip chip-active" data-cat="todos">Todos</button>' + "".join(
+        f'<button class="chip" data-cat="{_html_escape(_slug(c))}">{_html_escape(c)}</button>' for c in seen
+    )
 
     html = f"""<!DOCTYPE html><html lang="es"><head>
 <meta charset="utf-8" />
@@ -906,7 +918,23 @@ async def public_catalog(bid: str, request: Request):
   .sub {{ font-size: 14px; opacity: 0.9; margin-top: 2px; }}
   .contacts {{ margin-top: 14px; font-size: 13px; opacity: 0.95; display: flex; flex-wrap: wrap; gap: 10px 16px; }}
   main {{ padding: 20px; }}
+  .chips {{
+    display: flex; gap: 8px; overflow-x: auto; padding: 4px 0 14px;
+    scrollbar-width: none; -webkit-overflow-scrolling: touch;
+    position: sticky; top: 0; background: #F8F8FA; z-index: 10; padding-top: 10px;
+  }}
+  .chips::-webkit-scrollbar {{ display: none; }}
+  .chip {{
+    flex-shrink: 0; height: 36px; padding: 0 14px; border-radius: 999px;
+    background: #fff; border: 1px solid var(--border); color: var(--text);
+    font-size: 13px; font-weight: 500; cursor: pointer; white-space: nowrap;
+    transition: background .15s ease, color .15s ease, border-color .15s ease;
+  }}
+  .chip:hover {{ border-color: var(--brand); }}
+  .chip-active {{ background: var(--brand); color: #fff; border-color: var(--brand); }}
   .grid {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; }}
+  .card.hidden {{ display: none; }}
+  .empty-filter {{ grid-column: 1 / -1; padding: 40px; text-align: center; color: var(--muted); font-size: 14px; }}
   .card {{ background: #fff; border: 1px solid var(--border); border-radius: 14px; overflow: hidden; cursor: pointer; transition: transform .15s ease, box-shadow .15s ease; }}
   .card:hover {{ transform: translateY(-2px); box-shadow: 0 8px 20px rgba(0,0,0,0.06); }}
   .imgwrap {{ position: relative; aspect-ratio: 1 / 1; background: #F2F2F7; }}
@@ -949,7 +977,9 @@ async def public_catalog(bid: str, request: Request):
   </div>
 </div></header>
 <main><div class="wrap">
-  <div class="grid">{cards_html}</div>
+  {f'<div class="chips" id="chips">{chips_html}</div>' if seen else ''}
+  <div class="grid" id="grid">{cards_html}</div>
+  <div class="empty-filter" id="emptyFilter" style="display:none">Sin productos en esta categoría</div>
 </div></main>
 <footer>Catálogo generado por Mis Negocios</footer>
 <div class="modal" id="modal" onclick="if(event.target===this)close_()">
@@ -969,6 +999,25 @@ async def public_catalog(bid: str, request: Request):
 </div>
 <script>
   const PHONE = {('"' + phone_digits + '"') if phone_digits else '""'};
+  // Category filter
+  const chips = document.querySelectorAll('#chips .chip');
+  const cards = document.querySelectorAll('.card');
+  const emptyFilter = document.getElementById('emptyFilter');
+  chips.forEach(chip => {{
+    chip.addEventListener('click', () => {{
+      chips.forEach(c => c.classList.remove('chip-active'));
+      chip.classList.add('chip-active');
+      const cat = chip.dataset.cat;
+      let visible = 0;
+      cards.forEach(card => {{
+        const match = cat === 'todos' || card.dataset.category === cat;
+        card.classList.toggle('hidden', !match);
+        if (match) visible++;
+      }});
+      if (emptyFilter) emptyFilter.style.display = visible === 0 ? 'block' : 'none';
+    }});
+  }});
+  // Modal
   document.querySelectorAll('.card').forEach(c => {{
     c.addEventListener('click', e => {{
       if (e.target.closest('.wa')) return;
