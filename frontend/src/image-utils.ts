@@ -1,5 +1,6 @@
 import * as ImagePicker from "expo-image-picker";
 import { ImageManipulator, SaveFormat } from "expo-image-manipulator";
+import { File as FsFile } from "expo-file-system";
 import { Platform } from "react-native";
 import Constants from "expo-constants";
 import { getAuthToken } from "./auth-context";
@@ -29,44 +30,34 @@ export function toRemoteUrl(pathOrUrl: string | undefined | null): string {
   return pathOrUrl; // local file:// — leave as is
 }
 
-async function uploadLocal(uri: string, mime: string): Promise<string> {
-  const token = getAuthToken();
-  const form = new FormData();
-  const name = `photo.${mime.split("/")[1] || "jpg"}`;
-  if (Platform.OS === "web") {
-    const blob = await (await fetch(uri)).blob();
-    form.append("file", blob, name);
-  } else {
-    // @ts-ignore RN native shape
-    form.append("file", { uri, name, type: mime });
-  }
-  const res = await fetch(`${API_BASE}/upload`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}` }, // DO NOT set Content-Type
-    body: form,
-  });
-  if (!res.ok) throw await responseError(res);
-  const j = await res.json();
-  return j.url || j.path;
-}
-
-export async function uploadAnyFile(uri: string, mime: string, filename: string): Promise<{ url: string; absoluteUrl: string }> {
-  const token = getAuthToken();
+// POSTs a local file to /api/upload as multipart form data.
+async function postFile(uri: string, mime: string, filename: string): Promise<{ path: string; url?: string }> {
   const form = new FormData();
   if (Platform.OS === "web") {
     const blob = await (await fetch(uri)).blob();
     form.append("file", blob, filename);
   } else {
-    // @ts-ignore RN native shape
-    form.append("file", { uri, name: filename, type: mime });
+    // Expo's fetch rejects React Native's `{ uri, name, type }` parts ("Unsupported FormDataPart
+    // implementation"); it accepts any part exposing bytes(), and takes name/type from the part.
+    const file = new FsFile(uri);
+    form.append("file", { name: filename, type: mime, bytes: () => file.bytes() } as unknown as Blob);
   }
   const res = await fetch(`${API_BASE}/upload`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${token}` },
+    headers: { Authorization: `Bearer ${getAuthToken()}` }, // DO NOT set Content-Type
     body: form,
   });
   if (!res.ok) throw await responseError(res);
-  const j = await res.json();
+  return res.json();
+}
+
+async function uploadLocal(uri: string, mime: string): Promise<string> {
+  const j = await postFile(uri, mime, `photo.${mime.split("/")[1] || "jpg"}`);
+  return j.url || j.path;
+}
+
+export async function uploadAnyFile(uri: string, mime: string, filename: string): Promise<{ url: string; absoluteUrl: string }> {
+  const j = await postFile(uri, mime, filename);
   const relative = j.url || `/api/files/${j.path}`;
   return { url: relative, absoluteUrl: toRemoteUrl(relative) };
 }
