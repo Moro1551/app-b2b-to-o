@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { View, Text, TextInput, StyleSheet, Pressable, ScrollView, Alert } from "react-native";
+import { View, Text, TextInput, StyleSheet, Pressable, ScrollView, Alert, ActivityIndicator } from "react-native";
 import { Image } from "expo-image";
 import Ionicons from "@react-native-vector-icons/ionicons";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -7,8 +7,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { FormScreen, Field, formStyles } from "@/src/components/form-screen";
 import { api } from "@/src/api";
 import { useBusiness, formatMoney } from "@/src/business-context";
-import { pickImage } from "@/src/image-utils";
-import { toRemoteUrl } from "@/src/image-utils";
+import { pickImage, describeUploadError, toRemoteUrl } from "@/src/image-utils";
 import { colors, radius, spacing } from "@/src/theme";
 
 export default function ProductForm() {
@@ -82,12 +81,22 @@ export default function ProductForm() {
     (isEdit ? updateMut : createMut).mutate();
   };
 
+  const [uploading, setUploading] = useState(false);
   const addPhoto = async (fromCamera: boolean) => {
-    const uri = await pickImage(fromCamera);
-    if (uri) setForm({ ...form, photos: [...(form.photos || []), uri] });
+    if (uploading) return;
+    setUploading(true);
+    try {
+      const uri = await pickImage(fromCamera);
+      // Functional update: the upload takes a while and the user may keep editing meanwhile.
+      if (uri) setForm((f: any) => ({ ...f, photos: [...(f.photos || []), uri] }));
+    } catch (e) {
+      Alert.alert("No se pudo subir la foto", describeUploadError(e));
+    } finally {
+      setUploading(false);
+    }
   };
   const removePhoto = (idx: number) => {
-    setForm({ ...form, photos: form.photos.filter((_: any, i: number) => i !== idx) });
+    setForm((f: any) => ({ ...f, photos: f.photos.filter((_: any, i: number) => i !== idx) }));
   };
 
   const currency = activeBusiness?.currency || "L";
@@ -111,11 +120,17 @@ export default function ProductForm() {
               </Pressable>
             </View>
           ))}
-          <Pressable style={styles.addPhoto} onPress={() => addPhoto(false)} testID="product-add-gallery">
+          {uploading && (
+            <View style={styles.addPhoto} testID="product-photo-uploading">
+              <ActivityIndicator color={colors.brandPrimary} />
+              <Text style={styles.addPhotoTxt}>Subiendo…</Text>
+            </View>
+          )}
+          <Pressable style={styles.addPhoto} onPress={() => addPhoto(false)} disabled={uploading} testID="product-add-gallery">
             <Ionicons name="images-outline" size={24} color={colors.brandPrimary} />
             <Text style={styles.addPhotoTxt}>Galería</Text>
           </Pressable>
-          <Pressable style={styles.addPhoto} onPress={() => addPhoto(true)} testID="product-add-camera">
+          <Pressable style={styles.addPhoto} onPress={() => addPhoto(true)} disabled={uploading} testID="product-add-camera">
             <Ionicons name="camera-outline" size={24} color={colors.brandPrimary} />
             <Text style={styles.addPhotoTxt}>Cámara</Text>
           </Pressable>

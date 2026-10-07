@@ -821,8 +821,38 @@ async def root():
     return {"message": "Mis Negocios API"}
 
 
+_storage_check: dict = {"at": 0.0, "status": ""}
+STORAGE_CHECK_TTL = 60  # seconds; keeps public ?deep=1 calls from hammering object storage
+
+
+async def storage_status() -> str:
+    """Round-trips a tiny object through Emergent object storage. Never includes the key."""
+    if not EMERGENT_LLM_KEY:
+        return "error: EMERGENT_LLM_KEY no configurada"
+    now = asyncio.get_event_loop().time()
+    if _storage_check["status"] and now - _storage_check["at"] < STORAGE_CHECK_TTL:
+        return _storage_check["status"]
+    path = f"{APP_NAME}/healthcheck.txt"
+    try:
+        await run_in_threadpool(_put_object, path, b"ok", "text/plain")
+        data, _ = await run_in_threadpool(_get_object, path)
+        status = "ok" if data == b"ok" else "error: contenido distinto al leer"
+    except requests.HTTPError as e:
+        code = e.response.status_code if e.response is not None else 0
+        status = {
+            401: "error: clave de Emergent inválida (HTTP 401)",
+            402: "error: sin crédito de almacenamiento en Emergent (HTTP 402)",
+        }.get(code, f"error: HTTP {code}")
+    except Exception as e:
+        status = f"error: {type(e).__name__}"
+    if status != "ok":
+        logger.warning("health: storage check failed: %s", status)
+    _storage_check.update(at=now, status=status)
+    return status
+
+
 @api_router.get("/health")
-async def health():
+async def health(deep: bool = False):
     # Always 200 so the host's health check passes; "db" tells whether MongoDB is reachable.
     try:
         await asyncio.wait_for(db.command("ping"), timeout=3)
@@ -830,7 +860,10 @@ async def health():
     except Exception as e:
         logger.warning("health: db ping failed: %s", e)
         db_status = "error"
-    return {"ok": True, "db": db_status}
+    result = {"ok": True, "db": db_status}
+    if deep:
+        result["storage"] = await storage_status()
+    return result
 
 
 @api_router.get("/fx/usd-to-hnl")

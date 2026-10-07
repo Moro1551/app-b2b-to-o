@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { View, Text, TextInput, StyleSheet, Pressable, Alert } from "react-native";
+import { View, Text, TextInput, StyleSheet, Pressable, Alert, ActivityIndicator } from "react-native";
 import { Image } from "expo-image";
 import Ionicons from "@react-native-vector-icons/ionicons";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -7,8 +7,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { FormScreen, Field, formStyles } from "@/src/components/form-screen";
 import { api } from "@/src/api";
 import { useBusiness } from "@/src/business-context";
-import { pickImage } from "@/src/image-utils";
-import { toRemoteUrl } from "@/src/image-utils";
+import { pickImage, describeUploadError, toRemoteUrl } from "@/src/image-utils";
 import { colors, radius, spacing } from "@/src/theme";
 
 export default function BusinessForm() {
@@ -81,9 +80,19 @@ export default function BusinessForm() {
     (isEdit ? updateMut : createMut).mutate();
   };
 
+  const [uploading, setUploading] = useState(false);
   const chooseLogo = async () => {
-    const uri = await pickImage(false);
-    if (uri) setForm({ ...form, logo: uri });
+    if (uploading) return;
+    setUploading(true);
+    try {
+      const uri = await pickImage(false);
+      // Functional update: the upload takes a while and the user may keep editing meanwhile.
+      if (uri) setForm((f: any) => ({ ...f, logo: uri }));
+    } catch (e) {
+      Alert.alert("No se pudo subir el logo", describeUploadError(e));
+    } finally {
+      setUploading(false);
+    }
   };
 
   return (
@@ -97,8 +106,13 @@ export default function BusinessForm() {
         ]);
       } : undefined}
     >
-      <Pressable style={styles.logoBtn} onPress={chooseLogo} testID="biz-logo-btn">
-        {form.logo ? (
+      <Pressable style={styles.logoBtn} onPress={chooseLogo} disabled={uploading} testID="biz-logo-btn">
+        {uploading ? (
+          <View style={styles.logoPlaceholder} testID="biz-logo-uploading">
+            <ActivityIndicator color={colors.brandPrimary} />
+            <Text style={styles.logoHint}>Subiendo…</Text>
+          </View>
+        ) : form.logo ? (
           <Image source={{ uri: toRemoteUrl(form.logo) }} style={styles.logoImg} contentFit="cover" />
         ) : (
           <View style={styles.logoPlaceholder}>

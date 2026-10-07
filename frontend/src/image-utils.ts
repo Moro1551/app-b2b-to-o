@@ -9,6 +9,23 @@ const envUrl =
 const BACKEND = envUrl?.replace(/\/$/, "") ?? "";
 const API_BASE = `${BACKEND}/api`;
 
+// Turns a failed upload response into an Error carrying the backend's "detail" message.
+async function uploadError(res: Response): Promise<Error> {
+  const txt = await res.text();
+  let detail: unknown = txt;
+  try { detail = JSON.parse(txt).detail ?? txt; } catch {}
+  return new Error(typeof detail === "string" && detail ? detail : `HTTP ${res.status}`);
+}
+
+/** Spanish message for an upload failure, ready for an alert. */
+export function describeUploadError(e: unknown): string {
+  const msg = e instanceof Error ? e.message : String(e ?? "");
+  if (!msg || /network request failed|failed to fetch|aborted/i.test(msg)) {
+    return "No se pudo conectar con el servidor. Revisa tu conexión a internet e inténtalo de nuevo.";
+  }
+  return msg;
+}
+
 export function toRemoteUrl(pathOrUrl: string | undefined | null): string {
   if (!pathOrUrl) return "";
   if (/^https?:\/\//.test(pathOrUrl)) return pathOrUrl;
@@ -34,10 +51,7 @@ async function uploadLocal(uri: string, mime: string): Promise<string> {
     headers: { Authorization: `Bearer ${token}` }, // DO NOT set Content-Type
     body: form,
   });
-  if (!res.ok) {
-    const txt = await res.text();
-    throw new Error(txt || `HTTP ${res.status}`);
-  }
+  if (!res.ok) throw await uploadError(res);
   const j = await res.json();
   return j.url || j.path;
 }
@@ -57,10 +71,7 @@ export async function uploadAnyFile(uri: string, mime: string, filename: string)
     headers: { Authorization: `Bearer ${token}` },
     body: form,
   });
-  if (!res.ok) {
-    const txt = await res.text();
-    throw new Error(txt || `HTTP ${res.status}`);
-  }
+  if (!res.ok) throw await uploadError(res);
   const j = await res.json();
   const relative = j.url || `/api/files/${j.path}`;
   return { url: relative, absoluteUrl: toRemoteUrl(relative) };
