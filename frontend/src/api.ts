@@ -66,7 +66,8 @@ export const api = {
 
   fxUsdHnl: () => request<{ rate: number; source: string; fetched_at: string }>("/fx/usd-to-hnl"),
 
-  dashboard: (bid: string) => request<any>(`/businesses/${bid}/dashboard`),
+  // Sends the phone's UTC offset in minutes so "today" on the server matches the user's clock.
+  dashboard: (bid: string) => request<any>(`/businesses/${bid}/dashboard?tz_offset=${-new Date().getTimezoneOffset()}`),
 };
 
 export async function getActiveBusinessId(): Promise<string | null> {

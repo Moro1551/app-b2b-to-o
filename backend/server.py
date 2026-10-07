@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Request, Depends, UploadFile, File
+from fastapi import FastAPI, APIRouter, HTTPException, Request, Depends, UploadFile, File, Query
 from fastapi.responses import Response
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -148,6 +148,21 @@ logger = logging.getLogger(__name__)
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+# Honduras is UTC-6 all year (no daylight saving time). Used when the app doesn't send its offset.
+DEFAULT_TZ_OFFSET_MIN = -360
+
+
+def local_date(iso: Optional[str], tz: timezone):
+    """Calendar date of a stored UTC timestamp in the given timezone, or None if unparseable."""
+    try:
+        dt = datetime.fromisoformat(iso or "")
+    except (TypeError, ValueError):
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(tz).date()
 
 
 # ---------------- Models ----------------
@@ -780,14 +795,20 @@ async def delete_transaction(bid: str, tid: str, user: dict = Depends(get_curren
 
 # ---------------- Dashboard ----------------
 @api_router.get("/businesses/{bid}/dashboard")
-async def dashboard(bid: str, user: dict = Depends(get_current_user)):
+async def dashboard(
+    bid: str,
+    # Minutes east of UTC on the user's phone (Honduras: -360), so "today" matches their clock.
+    tz_offset: int = Query(DEFAULT_TZ_OFFSET_MIN, ge=-720, le=840),
+    user: dict = Depends(get_current_user),
+):
     await require_business(bid, user)
-    today = datetime.now(timezone.utc).date().isoformat()
+    tz = timezone(timedelta(minutes=tz_offset))
+    today = datetime.now(tz).date()
     sales = await db.sales.find({"business_id": bid}, {"_id": 0}).to_list(5000)
     today_total = 0.0
     today_count = 0
     for s in sales:
-        if (s.get("created_at") or "").startswith(today):
+        if local_date(s.get("created_at"), tz) == today:
             today_total += s.get("total", 0.0)
             today_count += 1
     products = await db.products.find({"business_id": bid}, {"_id": 0}).to_list(5000)
