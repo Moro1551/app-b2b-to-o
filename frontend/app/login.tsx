@@ -1,12 +1,21 @@
-import { View, Text, StyleSheet, Pressable, ActivityIndicator } from "react-native";
+import { View, Text, StyleSheet, Pressable, ActivityIndicator, ScrollView } from "react-native";
+import type { ComponentProps } from "react";
+import { Image } from "expo-image";
 import Ionicons from "@react-native-vector-icons/ionicons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useEffect, useState } from "react";
 import { useAuth } from "@/src/auth-context";
+import { useLightStatusBar } from "@/src/components/top-header";
 import { colors, radius, spacing } from "@/src/theme";
 
 // After this long, explain that the server may be waking up.
 const SLOW_HINT_MS = 4000;
+
+const BENEFITS: [ComponentProps<typeof Ionicons>["name"], string][] = [
+  ["bar-chart-outline", "Ventas del día y capital al instante"],
+  ["cube-outline", "Alertas cuando un producto se agota"],
+  ["sparkles-outline", "Asistente con IA para tu negocio"],
+];
 
 export default function Login() {
   const { signIn, busy, error, canRetry, retry } = useAuth();
@@ -14,6 +23,7 @@ export default function Login() {
   const [pressed, setPressed] = useState(false);
   const [slow, setSlow] = useState(false);
   const working = pressed || busy;
+  useLightStatusBar();
 
   useEffect(() => {
     if (!busy) return;
@@ -27,17 +37,27 @@ export default function Login() {
   };
 
   return (
-    <View style={[styles.wrap, { paddingTop: insets.top }]}>
-      <View style={styles.content}>
-        <View style={styles.heroIcon}>
-          <Ionicons name="briefcase" size={56} color={colors.brandPrimary} />
-        </View>
+    <View style={styles.wrap}>
+      <ScrollView contentContainerStyle={[styles.content, { paddingTop: insets.top + spacing.xxxl }]}>
+        <Image source={require("@/assets/images/icon.png")} style={styles.icon} contentFit="cover" />
         <Text style={styles.title}>Mis Negocios</Text>
         <Text style={styles.subtitle}>
-          Gestiona todos tus negocios desde una sola app.
+          Ventas, inventario y clientes de todos tus negocios en un solo lugar.
         </Text>
-      </View>
-      <View style={[styles.footer, { paddingBottom: insets.bottom + spacing.lg }]}>
+        <View style={styles.benefits}>
+          {BENEFITS.map(([icon, label]) => (
+            <View key={label} style={styles.benefit}>
+              <View style={styles.benefitIcon}>
+                <Ionicons name={icon} size={17} color={colors.onHeaderAccent} />
+              </View>
+              <Text style={styles.benefitTxt}>{label}</Text>
+            </View>
+          ))}
+        </View>
+      </ScrollView>
+
+      <View style={[styles.panel, { paddingBottom: insets.bottom + spacing.lg }]}>
+        <Text style={styles.panelTitle}>Inicia sesión</Text>
         {busy && slow && (
           <Text style={styles.hint} testID="login-slow-hint">
             Conectando con el servidor… la primera vez puede tardar hasta un minuto.
@@ -55,7 +75,7 @@ export default function Login() {
             <Text style={styles.retryTxt}>Reintentar</Text>
           </Pressable>
         )}
-        <Pressable style={styles.google} onPress={onPress} testID="login-google" disabled={working}>
+        <Pressable style={[styles.google, working && { opacity: 0.7 }]} onPress={onPress} testID="login-google" disabled={working}>
           {working ? <ActivityIndicator color={colors.onSurface} /> : <>
             <Ionicons name="logo-google" size={20} color={colors.onSurface} />
             <Text style={styles.googleTxt}>Continuar con Google</Text>
@@ -68,33 +88,41 @@ export default function Login() {
 }
 
 const styles = StyleSheet.create({
-  wrap: { flex: 1, backgroundColor: colors.surface },
-  content: { flex: 1, justifyContent: "center", alignItems: "center", paddingHorizontal: spacing.xl },
-  heroIcon: {
-    width: 120, height: 120, borderRadius: 60, backgroundColor: colors.brandTertiary,
-    justifyContent: "center", alignItems: "center", marginBottom: spacing.xl,
+  wrap: { flex: 1, backgroundColor: colors.header },
+  content: { flexGrow: 1, paddingHorizontal: spacing.xl + 4, paddingBottom: spacing.xl, gap: spacing.lg },
+  // Rounded like a launcher icon; the rest of the app uses smaller radii.
+  icon: { width: 72, height: 72, borderRadius: 16, borderWidth: 1, borderColor: colors.headerControl },
+  title: { fontSize: 38, fontWeight: "800", color: colors.onHeader, letterSpacing: -0.8, marginTop: spacing.sm },
+  subtitle: { fontSize: 16, color: colors.onHeaderMuted, lineHeight: 24, marginTop: -spacing.sm },
+  benefits: { gap: spacing.md, marginTop: spacing.sm },
+  benefit: { flexDirection: "row", alignItems: "center", gap: spacing.md },
+  benefitIcon: {
+    width: 34, height: 34, borderRadius: radius.sm, backgroundColor: colors.headerAccentSoft,
+    justifyContent: "center", alignItems: "center",
   },
-  title: { fontSize: 32, fontWeight: "700", color: colors.onSurface, marginBottom: spacing.sm },
-  subtitle: { fontSize: 15, color: colors.muted, textAlign: "center", paddingHorizontal: spacing.lg },
-  footer: { paddingHorizontal: spacing.xl, paddingTop: spacing.lg },
-  hint: { textAlign: "center", color: colors.muted, fontSize: 13, marginBottom: spacing.md },
+  benefitTxt: { flex: 1, fontSize: 15, fontWeight: "500", color: colors.onHeader },
+  panel: {
+    backgroundColor: colors.surface, gap: spacing.md,
+    paddingHorizontal: spacing.xl, paddingTop: spacing.xl,
+    borderTopLeftRadius: radius.lg + 2, borderTopRightRadius: radius.lg + 2,
+  },
+  panelTitle: { fontSize: 20, fontWeight: "800", color: colors.onSurface },
+  hint: { color: colors.muted, fontSize: 13, lineHeight: 18 },
   errorBox: {
     flexDirection: "row", alignItems: "flex-start", gap: spacing.sm,
-    backgroundColor: colors.errorTertiary, borderRadius: radius.md,
-    padding: spacing.md, marginBottom: spacing.md,
+    backgroundColor: colors.errorTertiary, borderRadius: radius.md, padding: spacing.md,
   },
   errorTxt: { flex: 1, color: colors.onErrorTertiary, fontSize: 14 },
   retry: {
     flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm,
-    backgroundColor: colors.brandPrimary, paddingVertical: spacing.md,
-    borderRadius: radius.pill, marginBottom: spacing.md,
+    backgroundColor: colors.brandPrimary, paddingVertical: 14, borderRadius: radius.md,
   },
   retryTxt: { fontSize: 16, fontWeight: "600", color: colors.onBrandPrimary },
   google: {
     flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm,
     backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.borderStrong,
-    paddingVertical: spacing.md, borderRadius: radius.pill,
+    paddingVertical: 14, borderRadius: radius.md,
   },
   googleTxt: { fontSize: 16, fontWeight: "600", color: colors.onSurface },
-  terms: { textAlign: "center", color: colors.muted, fontSize: 12, marginTop: spacing.md },
+  terms: { textAlign: "center", color: colors.muted, fontSize: 12 },
 });

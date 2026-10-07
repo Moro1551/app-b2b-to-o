@@ -1,19 +1,20 @@
 import { useState } from "react";
 import { View, Text, StyleSheet, Pressable, ScrollView, ActivityIndicator, Alert, Platform, Linking, Share } from "react-native";
+import { Image } from "expo-image";
 import Ionicons from "@react-native-vector-icons/ionicons";
 import { useRouter } from "expo-router";
 import { useQuery } from "@tanstack/react-query";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Print from "expo-print";
 import * as Sharing from "expo-sharing";
 import { api } from "@/src/api";
 import { useBusiness, formatMoney } from "@/src/business-context";
 import { toRemoteUrl, uploadAnyFile } from "@/src/image-utils";
+import { SubHeader } from "@/src/components/top-header";
+import { SectionHead, formStyles } from "@/src/components/form-screen";
 import { colors, radius, spacing } from "@/src/theme";
 
 export default function Catalog() {
   const router = useRouter();
-  const insets = useSafeAreaInsets();
   const { activeId, activeBusiness } = useBusiness();
   const [generating, setGenerating] = useState(false);
   const [sharingWa, setSharingWa] = useState(false);
@@ -43,19 +44,19 @@ export default function Catalog() {
 
     return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
       * { box-sizing: border-box; font-family: -apple-system, Helvetica, Arial, sans-serif; }
-      body { margin: 0; padding: 24px; color: #1C1C1E; }
-      .header { padding: 20px; background: ${headerColor}; color: white; border-radius: 12px; margin-bottom: 24px; }
+      body { margin: 0; padding: 24px; color: ${colors.onSurface}; }
+      .header { padding: 20px; background: ${headerColor}; color: white; border-radius: 8px; margin-bottom: 24px; }
       .bname { font-size: 28px; font-weight: 700; margin: 0; }
       .bsub { font-size: 14px; opacity: 0.9; margin-top: 4px; }
       .bcontact { font-size: 12px; margin-top: 10px; opacity: 0.95; }
       .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
-      .card { border: 1px solid #E5E5EA; border-radius: 12px; overflow: hidden; }
-      .card img { width: 100%; height: 200px; object-fit: cover; display: block; background: #F2F2F7; }
-      .noimg { height: 200px; background: #F2F2F7; display: flex; align-items: center; justify-content: center; color: #8E8E93; font-size: 12px; }
+      .card { border: 1px solid ${colors.border}; border-radius: 8px; overflow: hidden; }
+      .card img { width: 100%; height: 200px; object-fit: cover; display: block; background: ${colors.surfaceSecondary}; }
+      .noimg { height: 200px; background: ${colors.surfaceSecondary}; display: flex; align-items: center; justify-content: center; color: ${colors.muted}; font-size: 12px; }
       .info { padding: 10px 12px 12px; }
       .pname { font-size: 15px; font-weight: 600; }
-      .pcat { font-size: 11px; color: #8E8E93; margin-top: 2px; }
-      .pdesc { font-size: 11px; color: #4A4A4A; margin-top: 4px; }
+      .pcat { font-size: 11px; color: ${colors.muted}; margin-top: 2px; }
+      .pdesc { font-size: 11px; color: ${colors.muted}; margin-top: 4px; }
       .pprice { font-size: 15px; font-weight: 700; color: ${headerColor}; margin-top: 6px; }
     </style></head><body>
       <div class="header">
@@ -67,7 +68,7 @@ export default function Catalog() {
           ${b?.website || ""}
         </div>
       </div>
-      <div class="grid">${items || '<div style="padding:40px;text-align:center;color:#8E8E93">Sin productos</div>'}</div>
+      <div class="grid">${items || `<div style="padding:40px;text-align:center;color:${colors.muted}">Sin productos</div>`}</div>
     </body></html>`;
   };
 
@@ -143,58 +144,83 @@ export default function Catalog() {
     try { await Linking.openURL(publicUrl); } catch (e: any) { Alert.alert("Error", e?.message); }
   };
 
+  const previews = products.filter((p: any) => p.photos?.[0]).slice(0, 4);
+  const busy = generating || sharingWa || isLoading;
+
   return (
-    <View style={[styles.wrap, { paddingTop: insets.top }]}>
-      <View style={styles.header}>
-        <Pressable onPress={() => router.back()} hitSlop={10}><Ionicons name="chevron-back" size={28} color={colors.onSurface} /></Pressable>
-        <Text style={styles.title}>Catálogo PDF</Text>
-        <View style={{ width: 28 }} />
-      </View>
-      <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing.xxxl + insets.bottom }}>
-        <View style={styles.card}>
-          <Text style={styles.heroTitle}>Genera tu catálogo</Text>
+    <View style={styles.wrap}>
+      <SubHeader title="Catálogo" subtitle={activeBusiness?.name} />
+      <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing.xxl }}>
+        <View style={[formStyles.card, styles.hero]}>
+          <View style={styles.previews}>
+            {isLoading ? (
+              <View style={[styles.preview, styles.previewEmpty]}><ActivityIndicator color={colors.brandPrimary} /></View>
+            ) : previews.length > 0 ? (
+              previews.map((p: any) => (
+                <Image key={p.id} source={{ uri: toRemoteUrl(p.photos[0]) }} style={styles.preview} contentFit="cover" />
+              ))
+            ) : (
+              <View style={[styles.preview, styles.previewEmpty]}>
+                <Ionicons name="images-outline" size={22} color={colors.muted} />
+              </View>
+            )}
+          </View>
+          <Text style={styles.heroTitle}>
+            {isLoading ? "Cargando productos…" : `${products.length} ${products.length === 1 ? "producto" : "productos"} en tu catálogo`}
+          </Text>
           <Text style={styles.heroSub}>
-            {products.length} producto{products.length !== 1 ? "s" : ""} en {activeBusiness?.name || ""}.
+            Comparte tu catálogo con tus clientes como página web o como archivo PDF. Incluye foto, categoría, descripción y precio de cada producto.
           </Text>
-          <Text style={styles.heroInfo}>
-            El catálogo incluye encabezado con nombre, subtítulo y contactos del negocio, y una tarjeta por producto con foto, categoría, descripción y precio.
-          </Text>
+          {!isLoading && products.length === 0 && (
+            <Pressable style={styles.emptyCta} onPress={() => router.push("/product-form")} testID="catalog-add-product">
+              <Ionicons name="add" size={18} color={colors.onBrandSecondary} />
+              <Text style={styles.emptyCtaTxt}>Añade tu primer producto</Text>
+            </Pressable>
+          )}
         </View>
 
-        <Text style={styles.sectionLabel}>Catálogo online</Text>
-        <View style={styles.urlBox}>
-          <Ionicons name="link" size={16} color={colors.muted} />
-          <Text style={styles.urlTxt} numberOfLines={1} selectable>{publicUrl}</Text>
-          <Pressable onPress={openOnline} hitSlop={8} testID="catalog-open-online">
-            <Ionicons name="open-outline" size={18} color={colors.brandPrimary} />
-          </Pressable>
-        </View>
-        <Pressable style={styles.waBtn} onPress={shareOnline} testID="catalog-share-online">
-          <Ionicons name="logo-whatsapp" size={20} color="#FFFFFF" />
-          <Text style={styles.waTxt}>Compartir enlace web por WhatsApp</Text>
-        </Pressable>
-        <Text style={styles.waHint}>
-          Tus clientes abren el enlace en el navegador, ven las fotos ampliadas y piden cada producto con un toque.
-        </Text>
-
-        <Text style={styles.sectionLabel}>Como archivo PDF</Text>
-        <Pressable
-          style={[styles.waBtn, { backgroundColor: "#128C7E" }, (sharingWa || isLoading) && { opacity: 0.6 }]}
-          onPress={shareWhatsapp}
-          disabled={sharingWa || isLoading}
-          testID="catalog-whatsapp"
-        >
-          {sharingWa ? <ActivityIndicator color="#FFFFFF" /> : <>
+        <SectionHead title="Catálogo online" />
+        <View style={[formStyles.card, styles.block]}>
+          <View style={styles.urlBox}>
+            <Ionicons name="link" size={16} color={colors.muted} />
+            <Text style={styles.urlTxt} numberOfLines={1} selectable>{publicUrl}</Text>
+            <Pressable onPress={openOnline} hitSlop={8} style={styles.openBtn} testID="catalog-open-online">
+              <Text style={styles.openTxt}>Abrir</Text>
+              <Ionicons name="open-outline" size={14} color={colors.onBrandSecondary} />
+            </Pressable>
+          </View>
+          <Pressable style={[styles.btn, styles.btnWa]} onPress={shareOnline} testID="catalog-share-online">
             <Ionicons name="logo-whatsapp" size={20} color="#FFFFFF" />
-            <Text style={styles.waTxt}>Enviar PDF por WhatsApp</Text>
-          </>}
-        </Pressable>
-        <Pressable style={styles.cta} onPress={generate} disabled={generating || isLoading} testID="catalog-generate">
-          {generating ? <ActivityIndicator color={colors.onBrandPrimary} /> : <>
-            <Ionicons name="document-text" size={20} color={colors.onBrandPrimary} />
-            <Text style={styles.ctaTxt}>Generar PDF</Text>
-          </>}
-        </Pressable>
+            <Text style={styles.btnWaTxt}>Compartir enlace por WhatsApp</Text>
+          </Pressable>
+          <Text style={styles.hint}>
+            Tus clientes abren el enlace en el navegador, ven las fotos ampliadas y piden cada producto con un toque.
+          </Text>
+        </View>
+
+        <SectionHead title="Archivo PDF" />
+        <View style={[formStyles.card, styles.block]}>
+          <Pressable
+            style={[styles.btn, styles.btnOutline, busy && { opacity: 0.6 }]}
+            onPress={shareWhatsapp}
+            disabled={busy}
+            testID="catalog-whatsapp"
+          >
+            {sharingWa ? <ActivityIndicator color={colors.onSurface} /> : <>
+              <Ionicons name="logo-whatsapp" size={20} color={WHATSAPP_DARK} />
+              <Text style={styles.btnOutlineTxt}>Enviar PDF por WhatsApp</Text>
+            </>}
+          </Pressable>
+          <Pressable style={[styles.btn, styles.btnPrimary, busy && { opacity: 0.6 }]} onPress={generate} disabled={busy} testID="catalog-generate">
+            {generating ? <ActivityIndicator color={colors.onBrandPrimary} /> : <>
+              <Ionicons name="document-text-outline" size={20} color={colors.onBrandPrimary} />
+              <Text style={styles.btnPrimaryTxt}>Generar PDF</Text>
+            </>}
+          </Pressable>
+          <Text style={styles.hint}>
+            El PDF usa el color y los datos de contacto de tu negocio. Puedes cambiarlos en Perfil del negocio.
+          </Text>
+        </View>
       </ScrollView>
     </View>
   );
@@ -204,34 +230,44 @@ function escape(s: string) {
   return String(s || "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
 }
 
+// WhatsApp's own brand greens, so the share option is recognizable.
+const WHATSAPP = "#25D366";
+const WHATSAPP_DARK = "#128C7E";
+
 const styles = StyleSheet.create({
-  wrap: { flex: 1, backgroundColor: colors.surface },
-  header: {
-    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
-    paddingHorizontal: spacing.md, paddingVertical: spacing.sm,
-    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border,
+  wrap: { flex: 1, backgroundColor: colors.surfaceSecondary },
+  hero: { padding: spacing.lg, gap: spacing.sm },
+  previews: { flexDirection: "row", gap: spacing.sm, marginBottom: spacing.xs },
+  preview: { width: 64, height: 64, borderRadius: radius.md, backgroundColor: colors.surfaceTertiary },
+  previewEmpty: { justifyContent: "center", alignItems: "center" },
+  heroTitle: { fontSize: 18, fontWeight: "800", color: colors.onSurface },
+  heroSub: { fontSize: 13, color: colors.muted, lineHeight: 19 },
+  emptyCta: {
+    flexDirection: "row", alignItems: "center", gap: 6, alignSelf: "flex-start", marginTop: spacing.xs,
+    paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: radius.sm, backgroundColor: colors.brandSecondary,
   },
-  title: { fontSize: 17, fontWeight: "600", color: colors.onSurface },
-  card: { backgroundColor: colors.brandTertiary, borderRadius: radius.lg, padding: spacing.lg, marginBottom: spacing.lg },
-  heroTitle: { fontSize: 22, fontWeight: "700", color: colors.onSurface },
-  heroSub: { fontSize: 14, color: colors.onBrandTertiary, marginTop: spacing.xs },
-  heroInfo: { fontSize: 13, color: colors.muted, marginTop: spacing.md, lineHeight: 18 },
-  cta: {
-    flexDirection: "row", alignItems: "center", gap: spacing.sm, justifyContent: "center",
-    backgroundColor: colors.brandPrimary, paddingVertical: spacing.md, borderRadius: radius.pill,
-  },
-  ctaTxt: { color: colors.onBrandPrimary, fontWeight: "600", fontSize: 16 },
-  waBtn: {
-    flexDirection: "row", alignItems: "center", gap: spacing.sm, justifyContent: "center",
-    backgroundColor: "#25D366", paddingVertical: spacing.md, borderRadius: radius.pill, marginBottom: spacing.sm,
-  },
-  waTxt: { color: "#FFFFFF", fontWeight: "600", fontSize: 16 },
-  waHint: { fontSize: 12, color: colors.muted, textAlign: "center", marginTop: spacing.sm, marginBottom: spacing.lg, lineHeight: 17 },
-  sectionLabel: { fontSize: 13, fontWeight: "600", color: colors.muted, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: spacing.sm, marginLeft: spacing.xs },
+  emptyCtaTxt: { fontSize: 13, fontWeight: "700", color: colors.onBrandSecondary },
+  block: { padding: spacing.md, gap: spacing.md },
   urlBox: {
     flexDirection: "row", alignItems: "center", gap: spacing.sm,
-    backgroundColor: colors.surfaceSecondary, padding: spacing.md, borderRadius: radius.md,
-    marginBottom: spacing.sm,
+    paddingLeft: spacing.md, paddingRight: spacing.xs, height: 44,
+    backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border,
   },
   urlTxt: { flex: 1, fontSize: 12, color: colors.onSurface },
+  openBtn: {
+    flexDirection: "row", alignItems: "center", gap: 4,
+    paddingHorizontal: spacing.sm, paddingVertical: 6, borderRadius: radius.sm, backgroundColor: colors.brandSecondary,
+  },
+  openTxt: { fontSize: 12, fontWeight: "700", color: colors.onBrandSecondary },
+  btn: {
+    flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm,
+    paddingVertical: 14, borderRadius: radius.md,
+  },
+  btnWa: { backgroundColor: WHATSAPP },
+  btnWaTxt: { color: "#FFFFFF", fontWeight: "700", fontSize: 15 },
+  btnOutline: { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.borderStrong },
+  btnOutlineTxt: { color: colors.onSurface, fontWeight: "600", fontSize: 15 },
+  btnPrimary: { backgroundColor: colors.brandPrimary },
+  btnPrimaryTxt: { color: colors.onBrandPrimary, fontWeight: "600", fontSize: 15 },
+  hint: { fontSize: 12, color: colors.muted, lineHeight: 17 },
 });

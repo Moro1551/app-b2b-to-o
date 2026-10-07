@@ -6,7 +6,7 @@ import { reloadAppAsync } from "expo";
 import { Component, type ErrorInfo, type PropsWithChildren, useState } from "react";
 import { Platform, Pressable, ScrollView, Text, View } from "react-native";
 
-import { makeStyles } from "@/src/theme";
+import { makeStyles, radius } from "@/src/theme";
 
 type ErrorBoundaryState = { error: Error | null };
 
@@ -107,7 +107,7 @@ const useStyles = makeStyles((colors) => ({
   button: {
     marginTop: 8,
     backgroundColor: colors.brandPrimary,
-    borderRadius: 12,
+    borderRadius: radius.md,
     paddingHorizontal: 24,
     paddingVertical: 14,
     minWidth: 180,
@@ -130,7 +130,7 @@ const useStyles = makeStyles((colors) => ({
   details: {
     marginTop: 16,
     maxHeight: 260,
-    borderRadius: 12,
+    borderRadius: radius.md,
     borderWidth: 1,
     borderColor: colors.border,
     backgroundColor: colors.surfaceSecondary,

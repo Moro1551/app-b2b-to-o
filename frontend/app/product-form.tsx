@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { View, Text, TextInput, StyleSheet, Pressable, ScrollView, Alert, ActivityIndicator } from "react-native";
 import { Image } from "expo-image";
 import Ionicons from "@react-native-vector-icons/ionicons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { FormScreen, Field, formStyles } from "@/src/components/form-screen";
+import { FormScreen, Field, CardRow, AmountInput, formStyles, useLoadedForm } from "@/src/components/form-screen";
 import { api } from "@/src/api";
 import { useBusiness, formatMoney } from "@/src/business-context";
 import { pickImage, describeUploadError, toRemoteUrl } from "@/src/image-utils";
@@ -23,25 +23,19 @@ export default function ProductForm() {
     enabled: isEdit && !!activeId,
   });
 
-  const [form, setForm] = useState<any>({
+  const [form, setForm] = useLoadedForm<any, any>({
     name: "", description: "", category: "", material: "", sku: "",
     photos: [], unit_cost: "0", extra_costs: "0", sale_price: "0",
     stock: "0", min_stock: "0",
-  });
+  }, existing, (p) => ({
+    ...p,
+    unit_cost: String(p.unit_cost ?? 0),
+    extra_costs: String(p.extra_costs ?? 0),
+    sale_price: String(p.sale_price ?? 0),
+    stock: String(p.stock ?? 0),
+    min_stock: String(p.min_stock ?? 0),
+  }));
   const [addQty, setAddQty] = useState("");
-
-  useEffect(() => {
-    if (existing) {
-      setForm({
-        ...existing,
-        unit_cost: String(existing.unit_cost ?? 0),
-        extra_costs: String(existing.extra_costs ?? 0),
-        sale_price: String(existing.sale_price ?? 0),
-        stock: String(existing.stock ?? 0),
-        min_stock: String(existing.min_stock ?? 0),
-      });
-    }
-  }, [existing]);
 
   const parse = (v: string) => parseFloat(v || "0") || 0;
   const totalCost = useMemo(() => parse(form.unit_cost) + parse(form.extra_costs), [form.unit_cost, form.extra_costs]);
@@ -99,133 +93,145 @@ export default function ProductForm() {
     setForm((f: any) => ({ ...f, photos: f.photos.filter((_: any, i: number) => i !== idx) }));
   };
 
+  const [generating, setGenerating] = useState(false);
+  const generateDescription = async () => {
+    if (!form.name?.trim()) { Alert.alert("Agrega el nombre primero"); return; }
+    if (generating) return;
+    setGenerating(true);
+    try {
+      const { getAuthToken } = await import("@/src/auth-context");
+      const { API_BASE, responseError } = await import("@/src/api");
+      const token = getAuthToken();
+      const res = await fetch(`${API_BASE}/businesses/${activeId}/ai/product-description`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ name: form.name, category: form.category, material: form.material }),
+      });
+      if (!res.ok) throw await responseError(res);
+      const j = await res.json();
+      setForm((f: any) => ({ ...f, description: j.description }));
+    } catch (e: any) {
+      Alert.alert("Error", e?.message || "No se pudo generar");
+    } finally {
+      setGenerating(false);
+    }
+  };
+
   const currency = activeBusiness?.currency || "L";
+  const symbol = currency === "USD" ? "$" : "L";
+  const subtitle = isEdit ? [existing?.sku, existing?.category].filter(Boolean).join(" · ") : undefined;
+  const set = (key: string) => (v: string) => setForm({ ...form, [key]: v });
 
   return (
     <FormScreen
       title={isEdit ? "Editar producto" : "Nuevo producto"}
+      subtitle={subtitle}
       onSave={save}
+      saveLabel={isEdit ? "Guardar cambios" : "Guardar producto"}
+      grouped
       onDelete={isEdit ? () => Alert.alert("Eliminar producto", "¿Eliminar este producto?", [
         { text: "Cancelar", style: "cancel" },
         { text: "Eliminar", style: "destructive", onPress: () => deleteMut.mutate() },
       ]) : undefined}
     >
-      <Field label="Fotos">
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm }}>
-          {(form.photos || []).map((uri: string, idx: number) => (
-            <View key={idx} style={styles.photoBox}>
-              <Image source={{ uri: toRemoteUrl(uri) }} style={styles.photoImg} contentFit="cover" />
-              <Pressable style={styles.photoRemove} onPress={() => removePhoto(idx)}>
-                <Ionicons name="close" size={14} color="#fff" />
-              </Pressable>
-            </View>
-          ))}
-          {uploading && (
-            <View style={styles.addPhoto} testID="product-photo-uploading">
-              <ActivityIndicator color={colors.brandPrimary} />
-              <Text style={styles.addPhotoTxt}>Subiendo…</Text>
-            </View>
-          )}
-          <Pressable style={styles.addPhoto} onPress={() => addPhoto(false)} disabled={uploading} testID="product-add-gallery">
-            <Ionicons name="images-outline" size={24} color={colors.brandPrimary} />
-            <Text style={styles.addPhotoTxt}>Galería</Text>
-          </Pressable>
-          <Pressable style={styles.addPhoto} onPress={() => addPhoto(true)} disabled={uploading} testID="product-add-camera">
-            <Ionicons name="camera-outline" size={24} color={colors.brandPrimary} />
-            <Text style={styles.addPhotoTxt}>Cámara</Text>
-          </Pressable>
-        </ScrollView>
-      </Field>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.photos}>
+        {(form.photos || []).map((uri: string, idx: number) => (
+          <View key={idx} style={styles.photoBox}>
+            <Image source={{ uri: toRemoteUrl(uri) }} style={styles.photoImg} contentFit="cover" />
+            {idx === 0 && (
+              <View style={styles.coverBadge}>
+                <Text style={styles.coverTxt}>Portada</Text>
+              </View>
+            )}
+            <Pressable style={styles.photoRemove} onPress={() => removePhoto(idx)} hitSlop={6}>
+              <Ionicons name="close" size={14} color="#fff" />
+            </Pressable>
+          </View>
+        ))}
+        {uploading && (
+          <View style={styles.addPhoto} testID="product-photo-uploading">
+            <ActivityIndicator color={colors.brandPrimary} />
+            <Text style={styles.addPhotoTxt}>Subiendo…</Text>
+          </View>
+        )}
+        <Pressable style={styles.addPhoto} onPress={() => addPhoto(false)} disabled={uploading} testID="product-add-gallery">
+          <Ionicons name="images-outline" size={22} color={colors.onBrandSecondary} />
+          <Text style={styles.addPhotoTxt}>Galería</Text>
+        </Pressable>
+        <Pressable style={styles.addPhoto} onPress={() => addPhoto(true)} disabled={uploading} testID="product-add-camera">
+          <Ionicons name="camera-outline" size={22} color={colors.onBrandSecondary} />
+          <Text style={styles.addPhotoTxt}>Cámara</Text>
+        </Pressable>
+      </ScrollView>
 
+      <Text style={formStyles.section}>Detalles</Text>
       <Field label="Nombre *">
-        <TextInput style={formStyles.input} value={form.name} onChangeText={(v) => setForm({ ...form, name: v })} testID="product-name" placeholderTextColor={colors.muted} />
+        <TextInput style={formStyles.input} value={form.name} onChangeText={set("name")} testID="product-name" placeholderTextColor={colors.muted} />
       </Field>
-      <Field label="Descripción">
-        <View style={{ gap: spacing.xs }}>
-          <TextInput style={formStyles.textarea} value={form.description} onChangeText={(v) => setForm({ ...form, description: v })} multiline placeholderTextColor={colors.muted} />
-          <Pressable
-            style={styles.aiBtn}
-            onPress={async () => {
-              if (!form.name?.trim()) { Alert.alert("Agrega el nombre primero"); return; }
-              try {
-                const { getAuthToken } = await import("@/src/auth-context");
-                const { API_BASE, responseError } = await import("@/src/api");
-                const token = getAuthToken();
-                const res = await fetch(`${API_BASE}/businesses/${activeId}/ai/product-description`, {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-                  body: JSON.stringify({ name: form.name, category: form.category, material: form.material }),
-                });
-                if (!res.ok) throw await responseError(res);
-                const j = await res.json();
-                setForm((f: any) => ({ ...f, description: j.description }));
-              } catch (e: any) {
-                Alert.alert("Error", e?.message || "No se pudo generar");
-              }
-            }}
-            testID="product-ai-desc"
-          >
-            <Ionicons name="sparkles" size={16} color={colors.brandPrimary} />
-            <Text style={styles.aiBtnTxt}>Generar con AI</Text>
+      <View style={{ marginBottom: spacing.md }}>
+        <View style={styles.descHead}>
+          <Text style={styles.descLabel}>Descripción</Text>
+          <Pressable style={styles.aiBtn} onPress={generateDescription} disabled={generating} testID="product-ai-desc">
+            {generating
+              ? <ActivityIndicator size="small" color={colors.onBrandSecondary} />
+              : <Ionicons name="sparkles" size={14} color={colors.onBrandSecondary} />}
+            <Text style={styles.aiBtnTxt}>{generating ? "Generando…" : "Generar con AI"}</Text>
           </Pressable>
         </View>
-      </Field>
+        <TextInput style={formStyles.textarea} value={form.description} onChangeText={set("description")} multiline placeholderTextColor={colors.muted} />
+      </View>
       <View style={styles.row2}>
         <View style={{ flex: 1 }}>
           <Field label="Categoría">
-            <TextInput style={formStyles.input} value={form.category} onChangeText={(v) => setForm({ ...form, category: v })} placeholder="Pulseras, collares..." placeholderTextColor={colors.muted} />
+            <TextInput style={formStyles.input} value={form.category} onChangeText={set("category")} placeholder="Pulseras, collares..." placeholderTextColor={colors.muted} />
           </Field>
         </View>
         <View style={{ flex: 1 }}>
           <Field label="Material">
-            <TextInput style={formStyles.input} value={form.material} onChangeText={(v) => setForm({ ...form, material: v })} placeholder="Plata 925" placeholderTextColor={colors.muted} />
+            <TextInput style={formStyles.input} value={form.material} onChangeText={set("material")} placeholder="Plata 925" placeholderTextColor={colors.muted} />
           </Field>
         </View>
       </View>
       <Field label="SKU / Código">
-        <TextInput style={formStyles.input} value={form.sku} onChangeText={(v) => setForm({ ...form, sku: v })} autoCapitalize="characters" placeholderTextColor={colors.muted} />
+        <TextInput style={formStyles.input} value={form.sku} onChangeText={set("sku")} autoCapitalize="characters" placeholderTextColor={colors.muted} />
       </Field>
 
-      <Text style={styles.section}>Costos y precio</Text>
-      <View style={styles.row2}>
-        <View style={{ flex: 1 }}>
-          <Field label="Costo unitario"><TextInput style={formStyles.input} value={form.unit_cost} onChangeText={(v) => setForm({ ...form, unit_cost: v })} keyboardType="decimal-pad" testID="product-unit-cost" placeholderTextColor={colors.muted} /></Field>
-        </View>
-        <View style={{ flex: 1 }}>
-          <Field label="Costos extra"><TextInput style={formStyles.input} value={form.extra_costs} onChangeText={(v) => setForm({ ...form, extra_costs: v })} keyboardType="decimal-pad" placeholderTextColor={colors.muted} /></Field>
-        </View>
-      </View>
-      <View style={styles.calcCard}>
-        <View style={styles.calcRow}>
-          <Text style={styles.calcLabel}>Costo total</Text>
-          <Text style={styles.calcVal}>{formatMoney(totalCost, currency)}</Text>
-        </View>
-      </View>
-      <Field label="Precio de venta">
-        <TextInput style={formStyles.input} value={form.sale_price} onChangeText={(v) => setForm({ ...form, sale_price: v })} keyboardType="decimal-pad" testID="product-sale-price" placeholderTextColor={colors.muted} />
-      </Field>
-      <View style={styles.calcCard}>
-        <View style={styles.calcRow}>
-          <Text style={styles.calcLabel}>Margen de ganancia</Text>
-          <Text style={[styles.calcVal, { color: margin >= 0 ? colors.success : colors.error }]}>
-            {formatMoney(margin, currency)} ({marginPct.toFixed(1)}%)
-          </Text>
+      <Text style={formStyles.section}>Costos y precio</Text>
+      <View style={formStyles.card}>
+        <CardRow label="Costo unitario">
+          <AmountInput symbol={symbol} value={form.unit_cost} onChangeText={set("unit_cost")} testID="product-unit-cost" />
+        </CardRow>
+        <CardRow label="Costos extra">
+          <AmountInput symbol={symbol} value={form.extra_costs} onChangeText={set("extra_costs")} />
+        </CardRow>
+        <CardRow label="Costo total" muted>
+          <Text style={styles.computed}>{formatMoney(totalCost, currency)}</Text>
+        </CardRow>
+        <CardRow label="Precio de venta" strong>
+          <AmountInput symbol={symbol} value={form.sale_price} onChangeText={set("sale_price")} testID="product-sale-price" strong />
+        </CardRow>
+        <View style={[styles.marginRow, { backgroundColor: margin >= 0 ? colors.successTertiary : colors.errorTertiary }]}>
+          <Text style={[styles.marginLabel, { color: margin >= 0 ? colors.success : colors.error }]}>Ganancia por unidad</Text>
+          <View style={{ alignItems: "flex-end" }}>
+            <Text style={[styles.marginValue, { color: margin >= 0 ? colors.success : colors.error }]}>{formatMoney(margin, currency)}</Text>
+            <Text style={[styles.marginPct, { color: margin >= 0 ? colors.success : colors.error }]}>{marginPct.toFixed(1)}% sobre el costo</Text>
+          </View>
         </View>
       </View>
 
-      <Text style={styles.section}>Stock</Text>
-      <View style={styles.row2}>
-        <View style={{ flex: 1 }}>
-          <Field label="Cantidad en stock"><TextInput style={formStyles.input} value={form.stock} onChangeText={(v) => setForm({ ...form, stock: v })} keyboardType="number-pad" testID="product-stock" placeholderTextColor={colors.muted} /></Field>
-        </View>
-        <View style={{ flex: 1 }}>
-          <Field label="Stock mínimo"><TextInput style={formStyles.input} value={form.min_stock} onChangeText={(v) => setForm({ ...form, min_stock: v })} keyboardType="number-pad" placeholderTextColor={colors.muted} /></Field>
-        </View>
+      <Text style={formStyles.section}>Stock</Text>
+      <View style={formStyles.card}>
+        <CardRow label="Cantidad en stock">
+          <AmountInput value={form.stock} onChangeText={set("stock")} testID="product-stock" integer />
+        </CardRow>
+        <CardRow label="Stock mínimo" last>
+          <AmountInput value={form.min_stock} onChangeText={set("min_stock")} integer />
+        </CardRow>
       </View>
 
       {isEdit && (
         <>
-          <Text style={styles.section}>Entrada de mercadería</Text>
+          <Text style={formStyles.section}>Entrada de mercadería</Text>
           <View style={styles.row2}>
             <View style={{ flex: 1 }}>
               <TextInput style={formStyles.input} value={addQty} onChangeText={setAddQty} keyboardType="number-pad" placeholder="Cantidad a añadir" placeholderTextColor={colors.muted} testID="stock-entry-qty" />
@@ -248,23 +254,41 @@ export default function ProductForm() {
 }
 
 const styles = StyleSheet.create({
-  photoBox: { position: "relative", width: 80, height: 80, borderRadius: radius.md, overflow: "hidden" },
-  photoImg: { width: 80, height: 80, backgroundColor: colors.surfaceSecondary },
+  photos: { gap: spacing.sm, paddingBottom: spacing.sm },
+  photoBox: { position: "relative", width: 96, height: 96, borderRadius: radius.md, overflow: "hidden" },
+  photoImg: { width: 96, height: 96, backgroundColor: colors.surfaceTertiary },
+  coverBadge: {
+    position: "absolute", left: 6, bottom: 6,
+    backgroundColor: colors.brandPrimary, borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2,
+  },
+  coverTxt: { color: colors.onBrandPrimary, fontSize: 10, fontWeight: "700" },
   photoRemove: {
-    position: "absolute", top: 4, right: 4, backgroundColor: "rgba(0,0,0,0.6)",
-    width: 20, height: 20, borderRadius: 10, justifyContent: "center", alignItems: "center",
+    position: "absolute", top: 6, right: 6, backgroundColor: "rgba(0,0,0,0.6)",
+    width: 22, height: 22, borderRadius: 11, justifyContent: "center", alignItems: "center",
   },
   addPhoto: {
-    width: 80, height: 80, borderRadius: radius.md, backgroundColor: colors.surfaceSecondary,
-    justifyContent: "center", alignItems: "center", borderWidth: 1, borderColor: colors.border, borderStyle: "dashed",
+    width: 96, height: 96, borderRadius: radius.md, gap: 6,
+    backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.borderStrong,
+    justifyContent: "center", alignItems: "center",
   },
-  addPhotoTxt: { color: colors.brandPrimary, fontSize: 11, marginTop: 2 },
+  addPhotoTxt: { color: colors.muted, fontSize: 12, fontWeight: "600" },
   row2: { flexDirection: "row", gap: spacing.sm },
-  section: { fontSize: 13, fontWeight: "600", color: colors.muted, textTransform: "uppercase", letterSpacing: 0.5, marginTop: spacing.md, marginBottom: spacing.sm },
-  calcCard: { backgroundColor: colors.brandTertiary, borderRadius: radius.md, padding: spacing.md, marginBottom: spacing.md },
-  calcRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  calcLabel: { fontSize: 13, color: colors.onBrandTertiary, fontWeight: "500" },
-  calcVal: { fontSize: 15, fontWeight: "700", color: colors.onSurface },
+  descHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 },
+  descLabel: { fontSize: 13, fontWeight: "600", color: colors.muted, marginLeft: 2 },
+  aiBtn: {
+    flexDirection: "row", alignItems: "center", gap: 5,
+    paddingHorizontal: spacing.sm, paddingVertical: 4,
+    backgroundColor: colors.brandSecondary, borderRadius: radius.sm,
+  },
+  aiBtnTxt: { color: colors.onBrandSecondary, fontSize: 12, fontWeight: "700" },
+  computed: { fontSize: 14, fontWeight: "700", color: colors.onSurface },
+  marginRow: {
+    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+    paddingHorizontal: spacing.md, paddingVertical: spacing.md,
+  },
+  marginLabel: { fontSize: 14, fontWeight: "700" },
+  marginValue: { fontSize: 17, fontWeight: "800" },
+  marginPct: { fontSize: 12, fontWeight: "600", marginTop: 1 },
   entryBtn: {
     flexDirection: "row", alignItems: "center", gap: 4,
     backgroundColor: colors.brandPrimary, paddingHorizontal: spacing.md,
@@ -272,10 +296,4 @@ const styles = StyleSheet.create({
   },
   entryTxt: { color: colors.onBrandPrimary, fontWeight: "600" },
   hint: { fontSize: 12, color: colors.muted, marginTop: spacing.xs, marginLeft: spacing.xs },
-  aiBtn: {
-    flexDirection: "row", alignItems: "center", gap: spacing.xs, alignSelf: "flex-start",
-    paddingHorizontal: spacing.md, paddingVertical: spacing.xs,
-    backgroundColor: colors.brandTertiary, borderRadius: radius.pill,
-  },
-  aiBtnTxt: { color: colors.brandPrimary, fontSize: 13, fontWeight: "600" },
 });

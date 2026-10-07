@@ -27,7 +27,7 @@ export const BusinessSwitcherSheet = forwardRef<BottomSheetModal>((_, ref) => {
       handleIndicatorStyle={{ backgroundColor: colors.borderStrong }}
     >
       <BottomSheetView style={styles.sheet}>
-        <Text style={styles.title}>Mis Negocios</Text>
+        <Text style={styles.title}>Cambiar de negocio</Text>
         <ScrollView style={{ maxHeight: 360 }}>
           {businesses.map((b) => {
             const active = b.id === activeId;
@@ -49,10 +49,15 @@ export const BusinessSwitcherSheet = forwardRef<BottomSheetModal>((_, ref) => {
                   )}
                 </View>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.rowName}>{b.name}</Text>
-                  {!!b.subtitle && <Text style={styles.rowSub}>{b.subtitle}</Text>}
+                  <Text style={styles.rowName} numberOfLines={1}>{b.name}</Text>
+                  {!!b.subtitle && <Text style={styles.rowSub} numberOfLines={1}>{b.subtitle}</Text>}
                 </View>
-                {active && <Ionicons name="checkmark-circle" size={22} color={colors.brandPrimary} />}
+                {active && (
+                  <View style={styles.activeBadge}>
+                    <Ionicons name="checkmark" size={11} color={colors.onBrand} />
+                    <Text style={styles.activeTxt}>Activo</Text>
+                  </View>
+                )}
               </Pressable>
             );
           })}
@@ -65,7 +70,7 @@ export const BusinessSwitcherSheet = forwardRef<BottomSheetModal>((_, ref) => {
             router.push("/business-form");
           }}
         >
-          <Ionicons name="add-circle-outline" size={22} color={colors.brandPrimary} />
+          <Ionicons name="add" size={20} color={colors.onBrandSecondary} />
           <Text style={styles.addTxt}>Añadir negocio</Text>
         </Pressable>
       </BottomSheetView>
@@ -76,30 +81,37 @@ BusinessSwitcherSheet.displayName = "BusinessSwitcherSheet";
 
 const styles = StyleSheet.create({
   sheet: { flex: 1, paddingHorizontal: spacing.lg, paddingTop: spacing.xs },
-  title: { fontSize: 20, fontWeight: "600", color: colors.onSurface, marginBottom: spacing.md },
+  title: { fontSize: 18, fontWeight: "800", color: colors.onSurface, marginBottom: spacing.md },
   row: {
     flexDirection: "row",
     alignItems: "center",
     gap: spacing.md,
     paddingVertical: spacing.md,
     paddingHorizontal: spacing.md,
-    borderRadius: radius.md,
-    marginBottom: spacing.xs,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    marginBottom: spacing.sm,
   },
-  rowActive: { backgroundColor: colors.brandTertiary },
+  rowActive: { borderColor: colors.brand, borderWidth: 1.5, backgroundColor: colors.brandTertiary },
   avatar: {
-    width: 44, height: 44, borderRadius: 22,
+    width: 44, height: 44, borderRadius: radius.md,
     backgroundColor: colors.brandSecondary,
     justifyContent: "center", alignItems: "center", overflow: "hidden",
   },
   avatarImg: { width: 44, height: 44 },
-  avatarTxt: { color: colors.onBrandSecondary, fontWeight: "600", fontSize: 18 },
-  rowName: { fontSize: 16, fontWeight: "600", color: colors.onSurface },
+  avatarTxt: { color: colors.onBrandSecondary, fontWeight: "700", fontSize: 18 },
+  rowName: { fontSize: 15, fontWeight: "700", color: colors.onSurface },
   rowSub: { fontSize: 13, color: colors.muted, marginTop: 2 },
-  addBtn: {
-    flexDirection: "row", alignItems: "center", gap: spacing.sm,
-    paddingVertical: spacing.md, marginTop: spacing.sm,
-    borderTopWidth: 1, borderTopColor: colors.border,
+  activeBadge: {
+    flexDirection: "row", alignItems: "center", gap: 3,
+    backgroundColor: colors.brand, borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2,
   },
-  addTxt: { color: colors.brandPrimary, fontWeight: "600", fontSize: 15 },
+  activeTxt: { fontSize: 11, fontWeight: "700", color: colors.onBrand },
+  addBtn: {
+    flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm,
+    paddingVertical: spacing.md, marginTop: spacing.xs,
+    borderRadius: radius.lg, borderWidth: 1, borderStyle: "dashed", borderColor: colors.borderStrong,
+  },
+  addTxt: { color: colors.onBrandSecondary, fontWeight: "700", fontSize: 15 },
 });

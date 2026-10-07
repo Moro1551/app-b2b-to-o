@@ -27,7 +27,7 @@ export function EmptyState({
 const styles = StyleSheet.create({
   wrap: { alignItems: "center", padding: spacing.xl, marginTop: spacing.xxxl },
   iconWrap: {
-    width: 88, height: 88, borderRadius: 44,
+    width: 88, height: 88, borderRadius: radius.lg,
     backgroundColor: colors.brandTertiary,
     justifyContent: "center", alignItems: "center",
     marginBottom: spacing.lg,
@@ -36,7 +36,7 @@ const styles = StyleSheet.create({
   msg: { fontSize: 14, color: colors.muted, textAlign: "center", marginBottom: spacing.lg, paddingHorizontal: spacing.lg },
   btn: {
     backgroundColor: colors.brandPrimary, paddingHorizontal: spacing.xl, paddingVertical: spacing.md,
-    borderRadius: radius.pill,
+    borderRadius: radius.md,
   },
   btnTxt: { color: colors.onBrandPrimary, fontWeight: "600" },
 });

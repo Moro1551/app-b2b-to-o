@@ -1,23 +1,29 @@
 import { useMemo, useState } from "react";
-import { View, Text, StyleSheet, Pressable, ScrollView, TextInput, FlatList, ActivityIndicator } from "react-native";
+import { View, Text, StyleSheet, Pressable, FlatList, ActivityIndicator, useWindowDimensions } from "react-native";
 import { Image } from "expo-image";
 import Ionicons from "@react-native-vector-icons/ionicons";
-import { useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { useQuery } from "@tanstack/react-query";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { TopHeader } from "@/src/components/top-header";
+import { TopHeader, HeaderAction } from "@/src/components/top-header";
+import { SearchBar, FilterChips, FilterChip } from "@/src/components/list-tools";
 import { EmptyState } from "@/src/components/empty-state";
 import { useBusiness, formatMoney } from "@/src/business-context";
 import { toRemoteUrl } from "@/src/image-utils";
 import { api } from "@/src/api";
 import { colors, radius, spacing } from "@/src/theme";
 
+const isLow = (p: any) => (p.stock ?? 0) <= (p.min_stock ?? 0);
+
 export default function Inventory() {
   const { activeId, activeBusiness } = useBusiness();
   const router = useRouter();
-  const insets = useSafeAreaInsets();
+  const { width } = useWindowDimensions();
   const [query, setQuery] = useState("");
-  const [filter, setFilter] = useState<"todos" | "bajo" | string>("todos");
+  // The filter lives in the route so other screens can open this tab already filtered
+  // (e.g. the low-stock link on Inicio).
+  const params = useLocalSearchParams<{ filter?: string }>();
+  const filter = params.filter || "todos";
+  const setFilter = (f: string) => router.setParams({ filter: f });
 
   const { data: products = [], isLoading, refetch } = useQuery({
     queryKey: ["products", activeId],
@@ -31,6 +37,8 @@ export default function Inventory() {
     return Array.from(s);
   }, [products]);
 
+  const lowCount = useMemo(() => products.filter(isLow).length, [products]);
+
   const filtered = useMemo(() => {
     let list = products;
     if (query) {
@@ -42,42 +50,51 @@ export default function Inventory() {
       );
     }
     if (filter === "bajo") {
-      list = list.filter((p: any) => (p.stock ?? 0) <= (p.min_stock ?? 0));
+      list = list.filter(isLow);
     } else if (filter !== "todos") {
       list = list.filter((p: any) => p.category === filter);
     }
     return list;
   }, [products, query, filter]);
 
+  const stockValue = useMemo(
+    () => filtered.reduce((sum: number, p: any) => sum + (p.sale_price || 0) * Math.max(0, p.stock ?? 0), 0),
+    [filtered],
+  );
+
   const currency = activeBusiness?.currency || "L";
+  // Fixed width so a lone card in the last row keeps the size of the others.
+  const cardWidth = (width - spacing.lg * 2 - spacing.md) / 2;
 
   return (
     <View style={styles.wrap}>
-      <TopHeader title="Inventario" />
-      <View style={styles.searchWrap}>
-        <View style={styles.searchBar}>
-          <Ionicons name="search" size={18} color={colors.muted} />
-          <TextInput
-            placeholder="Buscar producto..."
-            placeholderTextColor={colors.muted}
+      <TopHeader
+        title="Inventario"
+        right={<HeaderAction icon="add" label="Nuevo" onPress={() => router.push("/product-form")} testID="add-product-btn" />}
+      />
+      {(isLoading || products.length > 0) && (
+        <View style={styles.tools}>
+          <SearchBar
             value={query}
             onChangeText={setQuery}
-            style={styles.input}
+            placeholder="Buscar producto o SKU"
             testID="search-input"
+            style={styles.search}
           />
+          <FilterChips>
+            <FilterChip id="Todos" label={`Todos · ${products.length}`} active={filter === "todos"} onPress={() => setFilter("todos")} />
+            <FilterChip id="Bajo stock" label={`Bajo stock · ${lowCount}`} active={filter === "bajo"} onPress={() => setFilter("bajo")} />
+            {categories.map((c) => (
+              <FilterChip key={c} id={c} label={c} active={filter === c} onPress={() => setFilter(c)} />
+            ))}
+          </FilterChips>
+          {!isLoading && (
+            <Text style={styles.summary}>
+              {filtered.length} {filtered.length === 1 ? "producto" : "productos"} · {formatMoney(stockValue, currency)} en stock
+            </Text>
+          )}
         </View>
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={{ gap: spacing.sm, paddingHorizontal: spacing.lg, paddingVertical: spacing.sm }}
-        >
-          <Chip label="Todos" active={filter === "todos"} onPress={() => setFilter("todos")} />
-          <Chip label="Bajo stock" active={filter === "bajo"} onPress={() => setFilter("bajo")} />
-          {categories.map((c) => (
-            <Chip key={c} label={c} active={filter === c} onPress={() => setFilter(c)} />
-          ))}
-        </ScrollView>
-      </View>
+      )}
 
       {isLoading ? (
         <View style={{ padding: spacing.xxl, alignItems: "center" }}>
@@ -96,32 +113,26 @@ export default function Inventory() {
           data={filtered}
           keyExtractor={(i) => i.id}
           numColumns={2}
-          contentContainerStyle={{ paddingHorizontal: spacing.lg, paddingTop: spacing.sm, paddingBottom: spacing.xxxl + insets.bottom + 60 }}
+          contentContainerStyle={{ paddingHorizontal: spacing.lg, paddingBottom: spacing.xxl }}
           columnWrapperStyle={{ gap: spacing.md, marginBottom: spacing.md }}
-          renderItem={({ item }) => <ProductCard item={item} currency={currency} />}
+          renderItem={({ item }) => <ProductCard item={item} currency={currency} width={cardWidth} />}
+          ListEmptyComponent={<Text style={styles.noResults}>Ningún producto coincide con la búsqueda.</Text>}
           onRefresh={refetch}
           refreshing={false}
         />
       )}
-
-      <Pressable
-        testID="add-product-fab"
-        style={[styles.fab, { bottom: 16 + 60 + insets.bottom }]}
-        onPress={() => router.push("/product-form")}
-      >
-        <Ionicons name="add" size={28} color={colors.onBrandPrimary} />
-      </Pressable>
     </View>
   );
 }
 
-function ProductCard({ item, currency }: { item: any; currency: string }) {
+function ProductCard({ item, currency, width }: { item: any; currency: string; width: number }) {
   const router = useRouter();
-  const low = (item.stock ?? 0) <= (item.min_stock ?? 0);
+  const low = isLow(item);
+  const meta = [item.category, item.sku].filter(Boolean).join(" · ");
   return (
     <Pressable
       testID={`product-${item.id}`}
-      style={styles.card}
+      style={[styles.card, { width }]}
       onPress={() => router.push({ pathname: "/product-form", params: { id: item.id } })}
     >
       <View style={styles.photoWrap}>
@@ -132,71 +143,44 @@ function ProductCard({ item, currency }: { item: any; currency: string }) {
             <Ionicons name="image-outline" size={32} color={colors.muted} />
           </View>
         )}
-        <View style={[styles.stockBadge, low && styles.stockBadgeLow]}>
-          <Text style={[styles.stockTxt, low && { color: colors.onError }]}>Stock: {item.stock ?? 0}</Text>
+        <View style={styles.stockBadge}>
+          <View style={[styles.stockDot, { backgroundColor: low ? colors.error : colors.success }]} />
+          <Text style={[styles.stockTxt, low && { color: colors.error }]}>
+            {low ? `${item.stock ?? 0} · bajo mínimo` : `${item.stock ?? 0} en stock`}
+          </Text>
         </View>
       </View>
-      <Text style={styles.name} numberOfLines={1}>{item.name}</Text>
-      {!!item.category && <Text style={styles.cat} numberOfLines={1}>{item.category}</Text>}
-      <Text style={styles.price}>{formatMoney(item.sale_price || 0, currency)}</Text>
-    </Pressable>
-  );
-}
-
-function Chip({ label, active, onPress }: any) {
-  return (
-    <Pressable
-      onPress={onPress}
-      style={[styles.chip, active && styles.chipActive]}
-      testID={`chip-${label}`}
-    >
-      <Text style={[styles.chipTxt, active && styles.chipTxtActive]}>{label}</Text>
+      <View style={styles.cardBody}>
+        <Text style={styles.name} numberOfLines={2}>{item.name}</Text>
+        {!!meta && <Text style={styles.meta} numberOfLines={1}>{meta}</Text>}
+        <Text style={styles.price}>{formatMoney(item.sale_price || 0, currency)}</Text>
+      </View>
     </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
-  wrap: { flex: 1, backgroundColor: colors.surface },
-  searchWrap: {
-    backgroundColor: colors.surface,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.border,
-  },
-  searchBar: {
-    flexDirection: "row", alignItems: "center", gap: spacing.sm,
-    marginHorizontal: spacing.lg, marginTop: spacing.sm,
-    backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, paddingHorizontal: spacing.md,
-    height: 44,
-  },
-  input: { flex: 1, color: colors.onSurface, fontSize: 15 },
-  chip: {
-    paddingHorizontal: spacing.md, height: 36, borderRadius: radius.pill,
-    backgroundColor: colors.surfaceSecondary, justifyContent: "center", flexShrink: 0,
-  },
-  chipActive: { backgroundColor: colors.brandPrimary },
-  chipTxt: { color: colors.onSurface, fontSize: 13, fontWeight: "500" },
-  chipTxtActive: { color: colors.onBrandPrimary },
+  wrap: { flex: 1, backgroundColor: colors.surfaceSecondary },
+  tools: { paddingTop: spacing.lg, paddingBottom: spacing.md, gap: spacing.md },
+  search: { marginHorizontal: spacing.lg },
+  summary: { fontSize: 13, color: colors.muted, marginHorizontal: spacing.lg },
+  noResults: { textAlign: "center", color: colors.muted, fontSize: 14, paddingVertical: spacing.xxl },
   card: {
-    flex: 1,
-    backgroundColor: colors.surface, borderRadius: radius.md,
+    backgroundColor: colors.surface, borderRadius: radius.lg,
     borderWidth: 1, borderColor: colors.border, overflow: "hidden",
   },
-  photoWrap: { position: "relative", width: "100%", aspectRatio: 1 },
-  photo: { width: "100%", height: "100%", backgroundColor: colors.surfaceSecondary },
+  photoWrap: { position: "relative", width: "100%", height: 140 },
+  photo: { width: "100%", height: "100%", backgroundColor: colors.surfaceTertiary },
   photoFallback: { justifyContent: "center", alignItems: "center" },
   stockBadge: {
-    position: "absolute", top: spacing.xs, right: spacing.xs,
-    backgroundColor: colors.surface, paddingHorizontal: 8, paddingVertical: 3, borderRadius: radius.pill,
+    position: "absolute", top: spacing.sm, left: spacing.sm,
+    flexDirection: "row", alignItems: "center", gap: 5,
+    backgroundColor: colors.surface, paddingHorizontal: 7, paddingVertical: 4, borderRadius: 4,
   },
-  stockBadgeLow: { backgroundColor: colors.error },
+  stockDot: { width: 6, height: 6, borderRadius: 3 },
   stockTxt: { fontSize: 11, fontWeight: "600", color: colors.onSurface },
-  name: { fontSize: 14, fontWeight: "600", color: colors.onSurface, paddingHorizontal: spacing.sm, paddingTop: spacing.sm },
-  cat: { fontSize: 12, color: colors.muted, paddingHorizontal: spacing.sm, marginTop: 2 },
-  price: { fontSize: 14, fontWeight: "700", color: colors.brandPrimary, paddingHorizontal: spacing.sm, paddingVertical: spacing.sm },
-  fab: {
-    position: "absolute", right: spacing.lg,
-    width: 56, height: 56, borderRadius: 28,
-    backgroundColor: colors.brandPrimary, justifyContent: "center", alignItems: "center",
-    shadowColor: "#000", shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.2, shadowRadius: 8, elevation: 6,
-  },
+  cardBody: { paddingHorizontal: spacing.md, paddingTop: 10, paddingBottom: spacing.md, gap: 2 },
+  name: { fontSize: 14, fontWeight: "600", color: colors.onSurface },
+  meta: { fontSize: 12, color: colors.muted },
+  price: { fontSize: 16, fontWeight: "800", color: colors.onSurface, marginTop: spacing.xs },
 });
