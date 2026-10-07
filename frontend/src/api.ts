@@ -1,6 +1,6 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import Constants from "expo-constants";
-import { getAuthToken } from "./auth-context";
+import { getAuthToken, notifyUnauthorized } from "./auth-context";
 
 const envUrl =
   (process.env.EXPO_PUBLIC_BACKEND_URL as string | undefined) ??
@@ -21,6 +21,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     },
   });
   if (!res.ok) {
+    if (res.status === 401 && token) notifyUnauthorized();
     const text = await res.text();
     throw new Error(text || `HTTP ${res.status}`);
   }

@@ -19,6 +19,7 @@ type Ctx = {
   activeBusiness: Business | null;
   activeId: string | null;
   isLoading: boolean;
+  isError: boolean;
   refresh: () => void;
   switchBusiness: (id: string) => Promise<void>;
 };
@@ -31,7 +32,7 @@ export function BusinessProvider({ children }: { children: ReactNode }) {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [initialized, setInitialized] = useState(false);
 
-  const { data: businesses = [], isLoading, refetch } = useQuery({
+  const { data: businesses = [], isLoading, isError, refetch } = useQuery({
     queryKey: ["businesses"],
     queryFn: () => api.listBusinesses(),
     enabled: !!user,
@@ -80,7 +81,7 @@ export function BusinessProvider({ children }: { children: ReactNode }) {
 
   return (
     <BusinessCtx.Provider
-      value={{ businesses, activeBusiness, activeId, isLoading, refresh, switchBusiness }}
+      value={{ businesses, activeBusiness, activeId, isLoading, isError, refresh, switchBusiness }}
     >
       {children}
     </BusinessCtx.Provider>

@@ -1,0 +1,28 @@
+# Render Blueprint for the Mis Negocios API (FastAPI, backend/server.py).
+# Free plan: the service sleeps after 15 min without traffic; the first request then takes ~1 min.
+services:
+  - type: web
+    name: mis-negocios-api
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn server:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.11
+      - key: DB_NAME
+        value: mis_negocios
+      - key: PAYPAL_MODE
+        value: sandbox
+      # Secrets: Render asks for these when the Blueprint is created.
+      - key: MONGO_URL
+        sync: false
+      - key: EMERGENT_LLM_KEY
+        sync: false
+      - key: PAYPAL_CLIENT_ID
+        sync: false
+      - key: PAYPAL_SECRET
+        sync: false

@@ -4,6 +4,7 @@ from fastapi.concurrency import run_in_threadpool
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
+import asyncio
 import os
 import logging
 from pathlib import Path
@@ -144,7 +145,7 @@ def _get_object(path: str) -> tuple[bytes, str]:
     return r.content, r.headers.get("Content-Type", "application/octet-stream")
 
 mongo_url = os.environ['MONGO_URL']
-client = AsyncIOMotorClient(mongo_url)
+client = AsyncIOMotorClient(mongo_url, serverSelectionTimeoutMS=10000)
 db = client[os.environ['DB_NAME']]
 
 app = FastAPI()
@@ -818,6 +819,18 @@ async def dashboard(bid: str, user: dict = Depends(get_current_user)):
 @api_router.get("/")
 async def root():
     return {"message": "Mis Negocios API"}
+
+
+@api_router.get("/health")
+async def health():
+    # Always 200 so the host's health check passes; "db" tells whether MongoDB is reachable.
+    try:
+        await asyncio.wait_for(db.command("ping"), timeout=3)
+        db_status = "ok"
+    except Exception as e:
+        logger.warning("health: db ping failed: %s", e)
+        db_status = "error"
+    return {"ok": True, "db": db_status}
 
 
 @api_router.get("/fx/usd-to-hnl")

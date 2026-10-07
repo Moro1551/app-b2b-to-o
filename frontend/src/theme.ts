@@ -29,6 +29,8 @@ const light = {
   onWarning: "#FFFFFF",
   error: "#FF3B30",
   onError: "#FFFFFF",
+  errorTertiary: "#FDECEA",
+  onErrorTertiary: "#B3261E",
   info: "#8E8E93",
   onInfo: "#FFFFFF",
 
