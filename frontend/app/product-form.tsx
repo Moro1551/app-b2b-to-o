@@ -149,14 +149,14 @@ export default function ProductForm() {
               if (!form.name?.trim()) { Alert.alert("Agrega el nombre primero"); return; }
               try {
                 const { getAuthToken } = await import("@/src/auth-context");
-                const { API_BASE } = await import("@/src/api");
+                const { API_BASE, responseError } = await import("@/src/api");
                 const token = getAuthToken();
                 const res = await fetch(`${API_BASE}/businesses/${activeId}/ai/product-description`, {
                   method: "POST",
                   headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
                   body: JSON.stringify({ name: form.name, category: form.category, material: form.material }),
                 });
-                if (!res.ok) throw new Error(await res.text());
+                if (!res.ok) throw await responseError(res);
                 const j = await res.json();
                 setForm((f: any) => ({ ...f, description: j.description }));
               } catch (e: any) {

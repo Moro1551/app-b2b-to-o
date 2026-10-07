@@ -21,7 +21,7 @@ services:
       # Secrets: Render asks for these when the Blueprint is created.
       - key: MONGO_URL
         sync: false
-      - key: EMERGENT_LLM_KEY
+      - key: GEMINI_API_KEY  # free key from aistudio.google.com
         sync: false
       - key: PAYPAL_CLIENT_ID
         sync: false

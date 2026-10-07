@@ -10,6 +10,14 @@ export const API_BASE = `${envUrl?.replace(/\/$/, "")}/api`;
 
 export const ACTIVE_BIZ_KEY = "@mn:active_business_id";
 
+/** Error carrying the backend's "detail" message (FastAPI) instead of the raw JSON body. */
+export async function responseError(res: Response): Promise<Error> {
+  const txt = await res.text();
+  let detail: unknown = txt;
+  try { detail = JSON.parse(txt).detail ?? txt; } catch {}
+  return new Error(typeof detail === "string" && detail ? detail : `HTTP ${res.status}`);
+}
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const token = getAuthToken();
   const res = await fetch(`${API_BASE}${path}`, {
@@ -22,8 +30,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   });
   if (!res.ok) {
     if (res.status === 401 && token) notifyUnauthorized();
-    const text = await res.text();
-    throw new Error(text || `HTTP ${res.status}`);
+    throw await responseError(res);
   }
   return res.json();
 }

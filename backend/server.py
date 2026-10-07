@@ -1,6 +1,5 @@
 from fastapi import FastAPI, APIRouter, HTTPException, Request, Depends, UploadFile, File
 from fastapi.responses import Response
-from fastapi.concurrency import run_in_threadpool
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -13,15 +12,50 @@ from typing import List, Optional
 import uuid
 from datetime import datetime, timezone, timedelta
 import httpx
-import requests
-from emergentintegrations.llm.chat import LlmChat, UserMessage
 
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
-EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY", "")
-CLAUDE_MODEL = "claude-haiku-4-5-20251001"
+# ---------------- AI (Google Gemini, free tier) ----------------
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+# Tried in order: a quota (429) or unknown model (404) on one falls through to the next.
+GEMINI_MODELS = [
+    m.strip()
+    for m in (os.environ.get("GEMINI_MODELS") or "gemini-3.8-flash,gemini-3.5-flash-lite").split(",")
+    if m.strip()
+]
+
+
+async def gemini_generate(system: str, contents: list[dict]) -> str:
+    """contents: Gemini turns, e.g. [{"role": "user", "parts": [{"text": "..."}]}]."""
+    if not GEMINI_API_KEY:
+        raise HTTPException(503, "La IA no está configurada en el servidor (falta GEMINI_API_KEY).")
+    body = {"system_instruction": {"parts": [{"text": system}]}, "contents": contents}
+    last_status = 0
+    async with httpx.AsyncClient(timeout=60.0) as cli:
+        for model in GEMINI_MODELS:
+            r = await cli.post(
+                GEMINI_URL.format(model=model),
+                headers={"x-goog-api-key": GEMINI_API_KEY},
+                json=body,
+            )
+            if r.status_code == 200:
+                parts = ((r.json().get("candidates") or [{}])[0].get("content") or {}).get("parts") or []
+                text = "".join(p.get("text", "") for p in parts).strip()
+                if text:
+                    return text
+                raise HTTPException(502, "La IA no devolvió una respuesta. Intenta reformular.")
+            last_status = r.status_code
+            logger.warning("Gemini %s -> HTTP %s: %s", model, r.status_code, r.text[:300])
+            if r.status_code not in (404, 429):
+                break
+    if last_status == 429:
+        raise HTTPException(429, "Se alcanzó el límite gratuito de la IA por ahora. Intenta en unos minutos.")
+    if last_status in (400, 401, 403):
+        raise HTTPException(502, "La clave de la IA (GEMINI_API_KEY) no es válida.")
+    raise HTTPException(502, f"La IA no respondió (HTTP {last_status}). Intenta de nuevo.")
 
 # ---------------- PayPal ----------------
 PAYPAL_CLIENT_ID = os.environ.get("PAYPAL_CLIENT_ID", "")
@@ -96,53 +130,11 @@ async def effective_usd_rate(biz: dict) -> tuple[float, str]:
         rate = 24.5
     return rate, "manual"
 
-# ---------------- Object Storage ----------------
-STORAGE_BASE = (os.environ.get("INTEGRATION_PROXY_URL") or "").strip() or "https://integrations.emergentagent.com"
-STORAGE_URL = STORAGE_BASE.rstrip("/") + "/objstore/api/v1/storage"
+# ---------------- File storage ----------------
+# Uploaded files live in MongoDB itself (db.files: metadata + bytes in "data"), so the
+# app needs no external storage service. One document per file keeps us under
+# MongoDB's 16 MB document limit as long as uploads stay below MAX_UPLOAD_BYTES.
 APP_NAME = "mis-negocios"
-_storage_key: Optional[str] = None
-
-
-def _init_storage() -> str:
-    global _storage_key
-    if _storage_key:
-        return _storage_key
-    resp = requests.post(f"{STORAGE_URL}/init", json={"emergent_key": EMERGENT_LLM_KEY}, timeout=30)
-    resp.raise_for_status()
-    _storage_key = resp.json()["storage_key"]
-    return _storage_key
-
-
-def _put_object(path: str, data: bytes, content_type: str) -> dict:
-    global _storage_key
-    key = _init_storage()
-    r = requests.put(
-        f"{STORAGE_URL}/objects/{path}",
-        headers={"X-Storage-Key": key, "Content-Type": content_type},
-        data=data, timeout=120,
-    )
-    if r.status_code == 503:
-        _storage_key = None
-        key = _init_storage()
-        r = requests.put(
-            f"{STORAGE_URL}/objects/{path}",
-            headers={"X-Storage-Key": key, "Content-Type": content_type},
-            data=data, timeout=120,
-        )
-    r.raise_for_status()
-    return r.json()
-
-
-def _get_object(path: str) -> tuple[bytes, str]:
-    global _storage_key
-    key = _init_storage()
-    r = requests.get(f"{STORAGE_URL}/objects/{path}", headers={"X-Storage-Key": key}, timeout=60)
-    if r.status_code == 503:
-        _storage_key = None
-        key = _init_storage()
-        r = requests.get(f"{STORAGE_URL}/objects/{path}", headers={"X-Storage-Key": key}, timeout=60)
-    r.raise_for_status()
-    return r.content, r.headers.get("Content-Type", "application/octet-stream")
 
 mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url, serverSelectionTimeoutMS=10000)
@@ -821,49 +813,17 @@ async def root():
     return {"message": "Mis Negocios API"}
 
 
-_storage_check: dict = {"at": 0.0, "status": ""}
-STORAGE_CHECK_TTL = 60  # seconds; keeps public ?deep=1 calls from hammering object storage
-
-
-async def storage_status() -> str:
-    """Round-trips a tiny object through Emergent object storage. Never includes the key."""
-    if not EMERGENT_LLM_KEY:
-        return "error: EMERGENT_LLM_KEY no configurada"
-    now = asyncio.get_event_loop().time()
-    if _storage_check["status"] and now - _storage_check["at"] < STORAGE_CHECK_TTL:
-        return _storage_check["status"]
-    path = f"{APP_NAME}/healthcheck.txt"
-    try:
-        await run_in_threadpool(_put_object, path, b"ok", "text/plain")
-        data, _ = await run_in_threadpool(_get_object, path)
-        status = "ok" if data == b"ok" else "error: contenido distinto al leer"
-    except requests.HTTPError as e:
-        code = e.response.status_code if e.response is not None else 0
-        status = {
-            401: "error: clave de Emergent inválida (HTTP 401)",
-            402: "error: sin crédito de almacenamiento en Emergent (HTTP 402)",
-        }.get(code, f"error: HTTP {code}")
-    except Exception as e:
-        status = f"error: {type(e).__name__}"
-    if status != "ok":
-        logger.warning("health: storage check failed: %s", status)
-    _storage_check.update(at=now, status=status)
-    return status
-
-
 @api_router.get("/health")
-async def health(deep: bool = False):
-    # Always 200 so the host's health check passes; "db" tells whether MongoDB is reachable.
+async def health():
+    # Always 200 so the host's health check passes; "db" tells whether MongoDB is reachable
+    # (files are stored there too). "ai" only says whether a key is configured.
     try:
         await asyncio.wait_for(db.command("ping"), timeout=3)
         db_status = "ok"
     except Exception as e:
         logger.warning("health: db ping failed: %s", e)
         db_status = "error"
-    result = {"ok": True, "db": db_status}
-    if deep:
-        result["storage"] = await storage_status()
-    return result
+    return {"ok": True, "db": db_status, "ai": "configured" if GEMINI_API_KEY else "missing"}
 
 
 @api_router.get("/fx/usd-to-hnl")
@@ -1088,12 +1048,12 @@ async def public_catalog(bid: str, request: Request):
     return Response(content=html, media_type="text/html; charset=utf-8")
 
 
-# ---------------- Files / Object Storage ----------------
+# ---------------- Files ----------------
 ALLOWED_UPLOAD_TYPES = {
     "image/jpeg", "image/jpg", "image/png", "image/webp", "image/heic", "image/heif",
     "application/pdf",
 }
-MAX_UPLOAD_BYTES = 20 * 1024 * 1024  # 20 MB
+MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB; must stay below MongoDB's 16 MB document limit
 
 
 def _ext_from_mime(mime: str) -> str:
@@ -1108,52 +1068,41 @@ def _ext_from_mime(mime: str) -> str:
 async def upload_file(file: UploadFile = File(...), user: dict = Depends(get_current_user)):
     content = await file.read()
     if len(content) > MAX_UPLOAD_BYTES:
-        raise HTTPException(413, "Archivo demasiado grande (máx 20MB)")
+        raise HTTPException(413, "Archivo demasiado grande (máx 10 MB)")
     mime = (file.content_type or "").lower()
     if mime not in ALLOWED_UPLOAD_TYPES:
-        raise HTTPException(400, f"Tipo no soportado: {mime}")
+        raise HTTPException(400, f"Tipo de archivo no soportado: {mime}")
     ext = _ext_from_mime(mime)
     path = f"{APP_NAME}/uploads/{user['user_id']}/{uuid.uuid4().hex}.{ext}"
     try:
-        await run_in_threadpool(_put_object, path, content, mime)
-    except requests.HTTPError as e:
-        status = e.response.status_code if e.response is not None else 500
-        if status == 402:
-            raise HTTPException(402, "Sin crédito de almacenamiento")
-        raise HTTPException(502, f"Error subiendo archivo: {status}")
-    except Exception as e:
+        await db.files.insert_one({
+            "path": path,
+            "user_id": user["user_id"],
+            "size": len(content),
+            "content_type": mime,
+            "data": content,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        })
+    except Exception:
         logger.exception("upload failed")
-        raise HTTPException(502, f"Error subiendo archivo: {e}")
-
-    await db.files.insert_one({
-        "path": path,
-        "user_id": user["user_id"],
-        "size": len(content),
-        "content_type": mime,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    })
+        raise HTTPException(502, "No se pudo guardar el archivo en el servidor. Intenta de nuevo.")
     return {"path": path, "url": f"/api/files/{path}"}
 
 
 @api_router.get("/files/{file_path:path}")
 async def get_file(file_path: str):
-    # Public read for product/catalog display; existence is validated via DB
-    meta = await db.files.find_one({"path": file_path}, {"_id": 0})
-    if not meta:
-        raise HTTPException(404, "Archivo no encontrado")
-    try:
-        data, ct = await run_in_threadpool(_get_object, file_path)
-    except Exception as e:
-        logger.warning("file fetch error: %s", e)
+    # Public read for product/catalog display
+    doc = await db.files.find_one({"path": file_path}, {"_id": 0, "data": 1, "content_type": 1})
+    if not doc or doc.get("data") is None:
         raise HTTPException(404, "Archivo no encontrado")
     return Response(
-        content=data,
-        media_type=meta.get("content_type") or ct,
+        content=bytes(doc["data"]),
+        media_type=doc.get("content_type") or "application/octet-stream",
         headers={"Cache-Control": "public, max-age=31536000, immutable"},
     )
 
 
-# ---------------- AI (Claude Haiku 4.5) ----------------
+# ---------------- AI (Gemini, see gemini_generate) ----------------
 class AIChatIn(BaseModel):
     message: str
     history: List[dict] = []  # [{role: "user"|"assistant", content: str}]
@@ -1195,8 +1144,6 @@ async def build_business_context(bid: str) -> str:
 @api_router.post("/businesses/{bid}/ai/chat")
 async def ai_chat(bid: str, data: AIChatIn, user: dict = Depends(get_current_user)):
     await require_business(bid, user)
-    if not EMERGENT_LLM_KEY:
-        raise HTTPException(500, "EMERGENT_LLM_KEY no configurada")
     ctx = await build_business_context(bid)
     system = (
         "Eres un asistente de negocios experto que ayuda a dueños de pequeños negocios. "
@@ -1204,34 +1151,27 @@ async def ai_chat(bid: str, data: AIChatIn, user: dict = Depends(get_current_use
         "Usa viñetas cuando listes recomendaciones. No inventes datos que no estén en el contexto.\n\n"
         f"Contexto del negocio activo:\n{ctx}"
     )
-    # Fold history into the current prompt to stay stateless per request
-    history_txt = ""
-    for m in (data.history or [])[-10:]:
-        role = m.get("role", "user")
-        content = (m.get("content") or "").strip()
-        if not content:
+    # Gemini wants turns that start with "user" and alternate; merge consecutive same-role messages.
+    contents: list[dict] = []
+    turns = [(m.get("role"), (m.get("content") or "").strip()) for m in (data.history or [])[-10:]]
+    for role, text in turns + [("user", data.message.strip())]:
+        if not text:
             continue
-        history_txt += f"\n{'Usuario' if role == 'user' else 'Asistente'}: {content}"
-    prompt = (history_txt + f"\nUsuario: {data.message}\nAsistente:").strip() if history_txt else data.message
-
-    chat = LlmChat(
-        api_key=EMERGENT_LLM_KEY,
-        session_id=f"biz-{bid}-{uuid.uuid4().hex[:8]}",
-        system_message=system,
-    ).with_model("anthropic", CLAUDE_MODEL)
-    try:
-        reply = await chat.send_message(UserMessage(text=prompt))
-    except Exception as e:
-        logger.exception("AI chat failed")
-        raise HTTPException(502, f"AI error: {e}")
-    return {"reply": str(reply).strip()}
+        g_role = "user" if role == "user" else "model"
+        if not contents and g_role == "model":
+            continue
+        if contents and contents[-1]["role"] == g_role:
+            contents[-1]["parts"][0]["text"] += "\n\n" + text
+        else:
+            contents.append({"role": g_role, "parts": [{"text": text}]})
+    if not contents:
+        raise HTTPException(400, "Escribe un mensaje")
+    return {"reply": await gemini_generate(system, contents)}
 
 
 @api_router.post("/businesses/{bid}/ai/product-description")
 async def ai_product_description(bid: str, data: AIDescIn, user: dict = Depends(get_current_user)):
     await require_business(bid, user)
-    if not EMERGENT_LLM_KEY:
-        raise HTTPException(500, "EMERGENT_LLM_KEY no configurada")
     if not data.name.strip():
         raise HTTPException(400, "Nombre requerido")
     system = (
@@ -1245,17 +1185,8 @@ async def ai_product_description(bid: str, data: AIDescIn, user: dict = Depends(
         f"Material: {data.material or 'no especificado'}\n\n"
         "Escribe una descripción corta y atractiva para catálogo."
     )
-    chat = LlmChat(
-        api_key=EMERGENT_LLM_KEY,
-        session_id=f"desc-{uuid.uuid4().hex[:8]}",
-        system_message=system,
-    ).with_model("anthropic", CLAUDE_MODEL)
-    try:
-        reply = await chat.send_message(UserMessage(text=prompt))
-    except Exception as e:
-        logger.exception("AI description failed")
-        raise HTTPException(502, f"AI error: {e}")
-    return {"description": str(reply).strip()}
+    description = await gemini_generate(system, [{"role": "user", "parts": [{"text": prompt}]}])
+    return {"description": description}
 
 
 app.include_router(api_router)
@@ -1283,11 +1214,6 @@ async def startup():
         await db.files.create_index("path", unique=True)
     except Exception as e:
         logger.warning("Index creation warning: %s", e)
-    try:
-        await run_in_threadpool(_init_storage)
-        logger.info("Object storage initialized")
-    except Exception as e:
-        logger.warning("Object storage init failed: %s", e)
 
 
 @app.on_event("shutdown")

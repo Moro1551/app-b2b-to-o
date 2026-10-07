@@ -5,10 +5,11 @@ import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { getAuthToken } from "@/src/auth-context";
 import { useBusiness } from "@/src/business-context";
-import { API_BASE } from "@/src/api";
+import { API_BASE, responseError } from "@/src/api";
 import { colors, radius, spacing } from "@/src/theme";
 
-type Msg = { role: "user" | "assistant"; content: string };
+// `error` marks local failure notices so they are shown but never sent back to the AI as history.
+type Msg = { role: "user" | "assistant"; content: string; error?: boolean };
 
 export default function AIChat() {
   const router = useRouter();
@@ -34,13 +35,19 @@ export default function AIChat() {
       const res = await fetch(`${API_BASE}/businesses/${activeId}/ai/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ message: text, history: messages.slice(-10) }),
+        body: JSON.stringify({
+          message: text,
+          history: messages.filter((m) => !m.error).slice(-10).map(({ role, content }) => ({ role, content })),
+        }),
       });
-      if (!res.ok) throw new Error(await res.text());
+      if (!res.ok) throw await responseError(res);
       const j = await res.json();
       setMessages([...newMsgs, { role: "assistant", content: j.reply || "..." }]);
     } catch (e: any) {
-      setMessages([...newMsgs, { role: "assistant", content: "Error: " + (e?.message || "no se pudo responder") }]);
+      const msg = /network request failed|failed to fetch/i.test(e?.message || "")
+        ? "No se pudo conectar con el servidor. Revisa tu conexión e inténtalo de nuevo."
+        : e?.message || "no se pudo responder";
+      setMessages([...newMsgs, { role: "assistant", content: "Error: " + msg, error: true }]);
     } finally {
       setLoading(false);
       setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 50);
@@ -55,7 +62,7 @@ export default function AIChat() {
         <Pressable onPress={() => router.back()} hitSlop={10}><Ionicons name="chevron-back" size={28} color={colors.onSurface} /></Pressable>
         <View style={{ flex: 1, alignItems: "center" }}>
           <Text style={styles.title}>Asistente AI</Text>
-          <Text style={styles.subtitle}>Claude Haiku</Text>
+          <Text style={styles.subtitle}>Google Gemini</Text>
         </View>
         <View style={{ width: 28 }} />
       </View>

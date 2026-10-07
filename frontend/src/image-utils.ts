@@ -1,21 +1,15 @@
 import * as ImagePicker from "expo-image-picker";
+import { ImageManipulator, SaveFormat } from "expo-image-manipulator";
 import { Platform } from "react-native";
 import Constants from "expo-constants";
 import { getAuthToken } from "./auth-context";
+import { responseError } from "./api";
 
 const envUrl =
   (process.env.EXPO_PUBLIC_BACKEND_URL as string | undefined) ??
   (Constants.expoConfig?.extra as any)?.EXPO_PUBLIC_BACKEND_URL;
 const BACKEND = envUrl?.replace(/\/$/, "") ?? "";
 const API_BASE = `${BACKEND}/api`;
-
-// Turns a failed upload response into an Error carrying the backend's "detail" message.
-async function uploadError(res: Response): Promise<Error> {
-  const txt = await res.text();
-  let detail: unknown = txt;
-  try { detail = JSON.parse(txt).detail ?? txt; } catch {}
-  return new Error(typeof detail === "string" && detail ? detail : `HTTP ${res.status}`);
-}
 
 /** Spanish message for an upload failure, ready for an alert. */
 export function describeUploadError(e: unknown): string {
@@ -51,7 +45,7 @@ async function uploadLocal(uri: string, mime: string): Promise<string> {
     headers: { Authorization: `Bearer ${token}` }, // DO NOT set Content-Type
     body: form,
   });
-  if (!res.ok) throw await uploadError(res);
+  if (!res.ok) throw await responseError(res);
   const j = await res.json();
   return j.url || j.path;
 }
@@ -71,31 +65,49 @@ export async function uploadAnyFile(uri: string, mime: string, filename: string)
     headers: { Authorization: `Bearer ${token}` },
     body: form,
   });
-  if (!res.ok) throw await uploadError(res);
+  if (!res.ok) throw await responseError(res);
   const j = await res.json();
   const relative = j.url || `/api/files/${j.path}`;
   return { url: relative, absoluteUrl: toRemoteUrl(relative) };
 }
 
+// Photos are stored in the database (free tier: 512 MB), so shrink them before uploading:
+// longest side 1280 px, JPEG at 70% is roughly 150–300 KB instead of several MB.
+const MAX_SIDE = 1280;
+const JPEG_QUALITY = 0.7;
+
+async function shrink(asset: ImagePicker.ImagePickerAsset): Promise<{ uri: string; mime: string }> {
+  try {
+    const ctx = ImageManipulator.manipulate(asset.uri);
+    const { width = 0, height = 0 } = asset;
+    if (width > MAX_SIDE || height > MAX_SIDE) {
+      ctx.resize(width >= height ? { width: MAX_SIDE } : { height: MAX_SIDE });
+    }
+    const image = await ctx.renderAsync();
+    const out = await image.saveAsync({ compress: JPEG_QUALITY, format: SaveFormat.JPEG });
+    return { uri: out.uri, mime: "image/jpeg" };
+  } catch (e) {
+    console.warn("shrink failed, uploading original", e);
+    return { uri: asset.uri, mime: asset.mimeType || "image/jpeg" };
+  }
+}
+
 export async function pickImage(fromCamera = false): Promise<string | null> {
+  let res: ImagePicker.ImagePickerResult;
   if (fromCamera) {
     const perm = await ImagePicker.requestCameraPermissionsAsync();
-    if (!perm.granted) return null;
-    const res = await ImagePicker.launchCameraAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      quality: 0.6,
-      allowsEditing: false,
-    });
-    if (res.canceled || !res.assets?.[0]) return null;
-    return await uploadLocal(res.assets[0].uri, res.assets[0].mimeType || "image/jpeg");
+    if (!perm.granted) {
+      throw new Error("La app no tiene permiso para usar la cámara. Actívalo en Ajustes > Apps > Mis Negocios > Permisos.");
+    }
+    res = await ImagePicker.launchCameraAsync({ mediaTypes: ["images"], quality: 1, allowsEditing: false });
+  } else {
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) {
+      throw new Error("La app no tiene permiso para ver tus fotos. Actívalo en Ajustes > Apps > Mis Negocios > Permisos.");
+    }
+    res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ["images"], quality: 1, allowsEditing: false });
   }
-  const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-  if (!perm.granted) return null;
-  const res = await ImagePicker.launchImageLibraryAsync({
-    mediaTypes: ImagePicker.MediaTypeOptions.Images,
-    quality: 0.6,
-    allowsEditing: false,
-  });
   if (res.canceled || !res.assets?.[0]) return null;
-  return await uploadLocal(res.assets[0].uri, res.assets[0].mimeType || "image/jpeg");
+  const { uri, mime } = await shrink(res.assets[0]);
+  return await uploadLocal(uri, mime);
 }

@@ -33,7 +33,7 @@ export default function More() {
             onPress={() => activeBusiness && router.push({ pathname: "/business-form", params: { id: activeBusiness.id } })}
             testID="row-profile"
           />
-          <Row icon="sparkles-outline" label="Asistente AI (Claude)" onPress={() => router.push("/ai-chat")} testID="row-ai" />
+          <Row icon="sparkles-outline" label="Asistente AI (Gemini)" onPress={() => router.push("/ai-chat")} testID="row-ai" />
           <Row icon="document-text-outline" label="Catálogo PDF" onPress={() => router.push("/catalog")} testID="row-catalog" />
         </Section>
 
