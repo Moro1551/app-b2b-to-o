@@ -27,10 +27,17 @@ next-env.d.ts
 
 # Production builds
 /build
+/builds
+*.apk
+*.aab
 dist/
 dist
 
 # Environment files (comprehensive coverage)
+backend/.env
+backend/.env.*
+!backend/.env.example
+.env*.local
 
 *token.json*
 *credentials.json*

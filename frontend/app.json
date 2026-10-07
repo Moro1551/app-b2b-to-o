@@ -25,6 +25,9 @@
         "android.permission.CAMERA",
         "android.permission.READ_EXTERNAL_STORAGE",
         "android.permission.WRITE_EXTERNAL_STORAGE"
+      ],
+      "blockedPermissions": [
+        "android.permission.RECORD_AUDIO"
       ]
     },
     "web": {
@@ -52,12 +55,20 @@
         "expo-image-picker",
         {
           "photosPermission": "Permitir elegir fotos para productos y logo del negocio.",
-          "cameraPermission": "Permitir tomar fotos para productos y logo del negocio."
+          "cameraPermission": "Permitir tomar fotos para productos y logo del negocio.",
+          "microphonePermission": false
         }
       ]
     ],
     "experiments": {
       "typedRoutes": true
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "83ec72f8-be93-48cc-a8b4-9f29294e60a7"
+      }
+    },
+    "owner": "moro1"
   }
 }
