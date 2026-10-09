@@ -12,7 +12,7 @@ import { colors, radius, spacing } from "@/src/theme";
 
 const EMPTY = {
   name: "", subtitle: "", logo: "", phone: "", email: "", address: "",
-  facebook: "", instagram: "", tiktok: "", website: "", currency: "L", color: "#9D7A2A",
+  facebook: "", instagram: "", tiktok: "", website: "", currency: "L", color: colors.brandPrimary,
   usd_rate: "24.50", auto_rate: false,
 };
 

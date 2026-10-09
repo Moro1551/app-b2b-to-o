@@ -158,7 +158,7 @@
   },
   "instructions_to_main_agent": [
     "Implement a Top-bar Dropdown pattern for the Multi-business switcher: Avatar/Logo + Active Business Name + Chevron Down. Tapping it opens a @gorhom/bottom-sheet listing available businesses.",
-    "The app primarily targets iOS-Native Clean with an elegant champagne/gold palette. Ensure high contrast for text over gold (use the defined deep gold brandPrimary #9D7A2A to keep WCAG contrast intact).",
+    "The app uses Proposal A 'Marino': navy brandPrimary #00183F with teal accent #0E9384. Navy is also the default catalog color; keep WCAG contrast for text over navy.",
     "For the Inventory grid, ensure a 2-column layout using flexWrap: 'wrap' and justifyContent: 'space-between' with dynamic width calculations. Do not leave single items orphaned with full width in a 2-col row.",
     "Use glassmorphism (expo-glass-effect or expo-blur) extensively for sticky headers, the bottom tab bar, and the business switcher bottom sheet.",
     "Any text overlaid on product images MUST include a top-to-bottom linear gradient scrim (transparent to surfaceInverse) to guarantee readability.",

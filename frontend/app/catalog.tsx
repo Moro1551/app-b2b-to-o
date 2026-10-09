@@ -29,7 +29,7 @@ export default function Catalog() {
 
   const buildHtml = () => {
     const b = activeBusiness;
-    const headerColor = b?.color || "#9D7A2A";
+    const headerColor = b?.color || colors.brandPrimary;
     const items = products.map((p: any) => `
       <div class="card">
         ${p.photos?.[0] ? `<img src="${toRemoteUrl(p.photos[0])}" />` : `<div class="noimg">Sin foto</div>`}

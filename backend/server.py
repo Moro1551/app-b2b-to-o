@@ -178,6 +178,10 @@ class SessionIn(BaseModel):
     session_id: str
 
 
+# Navy of the app icon; used for the catalog/PDF header when a business has not picked one.
+DEFAULT_CATALOG_COLOR = "#00183F"
+
+
 class Business(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     user_id: str
@@ -192,7 +196,7 @@ class Business(BaseModel):
     tiktok: Optional[str] = ""
     website: Optional[str] = ""
     currency: str = "L"
-    color: str = "#9D7A2A"
+    color: str = DEFAULT_CATALOG_COLOR
     usd_rate: float = 24.5  # 1 USD = X Lempiras; manual override
     auto_rate: bool = False  # when True, use live FX rate instead of usd_rate
     created_at: str = Field(default_factory=now_iso)
@@ -210,7 +214,7 @@ class BusinessIn(BaseModel):
     tiktok: Optional[str] = ""
     website: Optional[str] = ""
     currency: str = "L"
-    color: str = "#9D7A2A"
+    color: str = DEFAULT_CATALOG_COLOR
     usd_rate: float = 24.5
     auto_rate: bool = False
 
@@ -937,7 +941,7 @@ async def public_catalog(bid: str, request: Request):
     products = await db.products.find({"business_id": bid}, {"_id": 0}).sort("created_at", -1).to_list(500)
 
     base = str(request.base_url).rstrip("/")
-    header_color = biz.get("color") or "#9D7A2A"
+    header_color = biz.get("color") or DEFAULT_CATALOG_COLOR
     name = _html_escape(biz.get("name"))
     subtitle = _html_escape(biz.get("subtitle"))
     phone = (biz.get("phone") or "").strip()
