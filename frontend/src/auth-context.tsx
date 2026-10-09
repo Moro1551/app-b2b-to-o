@@ -5,11 +5,11 @@ import * as SecureStore from "expo-secure-store";
 import * as Linking from "expo-linking";
 import * as WebBrowser from "expo-web-browser";
 import { useQueryClient } from "@tanstack/react-query";
+import Constants from "expo-constants";
 
 WebBrowser.maybeCompleteAuthSession();
 
 const TOKEN_KEY = "mn_session_token";
-import Constants from "expo-constants";
 const envUrl =
   (process.env.EXPO_PUBLIC_BACKEND_URL as string | undefined) ??
   (Constants.expoConfig?.extra as any)?.EXPO_PUBLIC_BACKEND_URL;

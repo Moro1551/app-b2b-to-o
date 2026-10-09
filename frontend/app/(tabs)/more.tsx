@@ -1,5 +1,6 @@
+import { useState } from "react";
 import type { ComponentProps, ReactNode } from "react";
-import { View, Text, ScrollView, Pressable, StyleSheet } from "react-native";
+import { View, Text, ScrollView, Pressable, StyleSheet, Alert, ActivityIndicator } from "react-native";
 import Ionicons from "@react-native-vector-icons/ionicons";
 import { useRouter } from "expo-router";
 import { useQuery } from "@tanstack/react-query";
@@ -7,6 +8,7 @@ import { TopHeader } from "@/src/components/top-header";
 import { useBusiness, formatMoney } from "@/src/business-context";
 import { useAuth } from "@/src/auth-context";
 import { api } from "@/src/api";
+import { shareBackup } from "@/src/backup";
 import { colors, radius, spacing } from "@/src/theme";
 
 type IconName = ComponentProps<typeof Ionicons>["name"];
@@ -19,6 +21,19 @@ export default function More() {
   const router = useRouter();
   const { activeId, activeBusiness, businesses } = useBusiness();
   const { user, signOut } = useAuth();
+  const [backingUp, setBackingUp] = useState(false);
+
+  const backup = async () => {
+    if (backingUp) return;
+    setBackingUp(true);
+    try {
+      await shareBackup();
+    } catch (e: any) {
+      Alert.alert("No se pudo crear el respaldo", e?.message || "Inténtalo de nuevo.");
+    } finally {
+      setBackingUp(false);
+    }
+  };
 
   const { data: dash } = useQuery({
     queryKey: ["dashboard", activeId],
@@ -69,6 +84,7 @@ export default function More() {
 
         <Section title="Gestión">
           <Row icon="business-outline" label="Mis negocios" onPress={() => router.push("/businesses")} testID="row-businesses" />
+          <Row icon="cloud-download-outline" label="Respaldar mis datos" onPress={backup} busy={backingUp} testID="row-backup" />
           <Row icon="log-out-outline" label="Cerrar sesión" onPress={signOut} testID="row-signout" danger last />
         </Section>
       </ScrollView>
@@ -85,12 +101,13 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
   );
 }
 
-function Row({ icon, label, onPress, testID, danger, last }: {
+function Row({ icon, label, onPress, testID, danger, busy, last }: {
   icon: IconName;
   label: string;
   onPress: () => void;
   testID: string;
   danger?: boolean;
+  busy?: boolean;
   last?: boolean;
 }) {
   return (
@@ -99,7 +116,9 @@ function Row({ icon, label, onPress, testID, danger, last }: {
         <Ionicons name={icon} size={17} color={danger ? colors.error : colors.onBrandSecondary} />
       </View>
       <Text style={[styles.rowLabel, danger && { color: colors.error }]}>{label}</Text>
-      {!danger && <Ionicons name="chevron-forward" size={18} color={colors.muted} />}
+      {busy
+        ? <ActivityIndicator size="small" color={colors.muted} />
+        : !danger && <Ionicons name="chevron-forward" size={18} color={colors.muted} />}
     </Pressable>
   );
 }

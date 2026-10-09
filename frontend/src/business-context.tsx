@@ -29,39 +29,32 @@ const BusinessCtx = createContext<Ctx | null>(null);
 export function BusinessProvider({ children }: { children: ReactNode }) {
   const qc = useQueryClient();
   const { user } = useAuth();
-  const [activeId, setActiveId] = useState<string | null>(null);
+  // The business the user last picked, as saved on the device.
+  const [chosenId, setChosenId] = useState<string | null>(null);
   const [initialized, setInitialized] = useState(false);
 
-  const { data: businesses = [], isLoading, isError, refetch } = useQuery({
+  const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ["businesses"],
     queryFn: () => api.listBusinesses(),
     enabled: !!user,
   });
+  const businesses: Business[] = useMemo(() => data ?? [], [data]);
 
   useEffect(() => {
     (async () => {
-      const stored = await getActiveBusinessId();
-      setActiveId(stored);
+      setChosenId(await getActiveBusinessId());
       setInitialized(true);
     })();
   }, []);
 
-  useEffect(() => {
-    if (!initialized || !user) return;
-    if (businesses.length === 0) {
-      if (activeId !== null) {
-        setActiveId(null);
-        setActiveBusinessId(null);
-      }
-      return;
-    }
-    const exists = activeId && businesses.some((b) => b.id === activeId);
-    if (!exists) {
-      const first = businesses[0].id;
-      setActiveId(first);
-      setActiveBusinessId(first);
-    }
-  }, [businesses, activeId, initialized, user]);
+  // Derived instead of synced in an effect: an effect saw the still-empty list while it loaded and
+  // cleared the saved choice, so the app always reopened on the first business.
+  const activeId = useMemo(() => {
+    if (!initialized) return null;
+    if (!data) return chosenId; // list not loaded yet: screens can already start fetching
+    if (chosenId && businesses.some((b) => b.id === chosenId)) return chosenId;
+    return businesses[0]?.id ?? null;
+  }, [initialized, data, businesses, chosenId]);
 
   const activeBusiness = useMemo(
     () => businesses.find((b) => b.id === activeId) || null,
@@ -70,7 +63,7 @@ export function BusinessProvider({ children }: { children: ReactNode }) {
 
   const switchBusiness = useCallback(
     async (id: string) => {
-      setActiveId(id);
+      setChosenId(id);
       await setActiveBusinessId(id);
       qc.invalidateQueries();
     },

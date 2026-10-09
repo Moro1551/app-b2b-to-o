@@ -46,11 +46,19 @@ export default function Finance() {
   const barMax = Math.max(sums.income, sums.expense, 1);
 
   const newTx = (type: "ingreso" | "egreso") => router.push({ pathname: "/transaction-new", params: { type } });
-  const confirmDelete = (id: string) =>
-    Alert.alert("Eliminar", "¿Eliminar este movimiento?", [
-      { text: "Cancelar", style: "cancel" },
-      { text: "Eliminar", style: "destructive", onPress: () => delMut.mutate(id) },
-    ]);
+  // Older sale income has no sale_id, only the "#<id>" the server writes in its description.
+  const fromSale = (tx: any) => !!tx.sale_id || /^(Venta|Abono venta|PayPal venta) #/.test(tx.description || "");
+  const confirmDelete = (tx: any) =>
+    Alert.alert(
+      "Eliminar",
+      fromSale(tx)
+        ? "Este ingreso viene de una venta. Borrarlo no cambia lo pagado en la venta; si la venta fue un error, elimínala desde Ventas."
+        : "¿Eliminar este movimiento?",
+      [
+        { text: "Cancelar", style: "cancel" },
+        { text: "Eliminar", style: "destructive", onPress: () => delMut.mutate(tx.id) },
+      ],
+    );
 
   return (
     <View style={styles.wrap}>
@@ -98,7 +106,7 @@ export default function Finance() {
               tx={item}
               currency={currency}
               last={index === filtered.length - 1}
-              onLongPress={() => confirmDelete(item.id)}
+              onLongPress={() => confirmDelete(item)}
             />
           )}
         />

@@ -30,6 +30,7 @@ export default function Sales() {
   const delMut = useMutation({
     mutationFn: (id: string) => api.deleteSale(activeId!, id),
     onSuccess: () => qc.invalidateQueries(),
+    onError: (e: any) => Alert.alert("No se pudo eliminar la venta", e?.message || "Inténtalo de nuevo."),
   });
 
   const currency = activeBusiness?.currency || "L";
@@ -61,11 +62,16 @@ export default function Sales() {
     return out;
   }, [sales, filter]);
 
-  const confirmDelete = (id: string) =>
-    Alert.alert("Eliminar", "¿Eliminar esta venta?", [
+  // Deleting undoes the sale on the server, so say exactly what will change.
+  const confirmDelete = (sale: any) => {
+    const units = (sale.items || []).reduce((n: number, i: any) => n + (i.quantity || 0), 0);
+    const effects = [`${units} ${units === 1 ? "unidad vuelve" : "unidades vuelven"} al inventario`];
+    if ((sale.paid || 0) > 0) effects.push(`se quita de Movimientos lo cobrado (${formatMoney(sale.paid, currency)})`);
+    Alert.alert("Eliminar venta", `Se deshará la venta: ${effects.join(" y ")}.`, [
       { text: "Cancelar", style: "cancel" },
-      { text: "Eliminar", style: "destructive", onPress: () => delMut.mutate(id) },
+      { text: "Eliminar", style: "destructive", onPress: () => delMut.mutate(sale.id) },
     ]);
+  };
 
   return (
     <View style={styles.wrap}>
@@ -120,7 +126,7 @@ export default function Sales() {
               sale={item}
               currency={currency}
               onPress={() => router.push({ pathname: "/sale-pay", params: { id: item.id } })}
-              onLongPress={() => confirmDelete(item.id)}
+              onLongPress={() => confirmDelete(item)}
             />
           )}
           ItemSeparatorComponent={() => <View style={{ height: spacing.sm }} />}

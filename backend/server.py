@@ -5,6 +5,7 @@ from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import asyncio
 import os
+import re
 import logging
 from pathlib import Path
 from pydantic import BaseModel, Field
@@ -340,6 +341,7 @@ class Transaction(BaseModel):
     category: Optional[str] = ""
     amount: float
     description: Optional[str] = ""
+    sale_id: Optional[str] = ""  # set on the income a sale records, so deleting the sale removes it
     created_at: str = Field(default_factory=now_iso)
 
 
@@ -622,7 +624,7 @@ async def create_sale(bid: str, data: SaleIn, user: dict = Depends(get_current_u
     if data.paid > 0:
         tx = Transaction(
             business_id=bid, type="ingreso", category="Venta",
-            amount=data.paid, description=f"Venta #{sale.id[:8]}",
+            amount=data.paid, description=f"Venta #{sale.id[:8]}", sale_id=sale.id,
         )
         await db.transactions.insert_one(tx.dict())
     return sale
@@ -630,9 +632,26 @@ async def create_sale(bid: str, data: SaleIn, user: dict = Depends(get_current_u
 
 @api_router.delete("/businesses/{bid}/sales/{sid}")
 async def delete_sale(bid: str, sid: str, user: dict = Depends(get_current_user)):
+    """Undoes the sale: its units go back to stock and the income it recorded is removed."""
     await require_business(bid, user)
-    await db.sales.delete_one({"id": sid, "business_id": bid})
-    return {"ok": True}
+    sale = await db.sales.find_one({"id": sid, "business_id": bid}, {"_id": 0})
+    if not sale:
+        return {"ok": True, "restocked": 0, "removed_transactions": 0}
+    # Only the request that actually deletes the sale undoes it, so a repeated delete can't restock twice.
+    res = await db.sales.delete_one({"id": sid, "business_id": bid})
+    if res.deleted_count == 0:
+        return {"ok": True, "restocked": 0, "removed_transactions": 0}
+    restocked = 0
+    for it in sale.get("items") or []:
+        qty = int(it.get("quantity") or 0)
+        await db.products.update_one({"id": it.get("product_id"), "business_id": bid}, {"$inc": {"stock": qty}})
+        restocked += qty
+    # Income recorded before transactions had sale_id is recognized by the "#<id[:8]>" in its description.
+    legacy = rf"^(Venta|Abono venta|PayPal venta) #{re.escape(sid[:8])}\b"
+    removed = await db.transactions.delete_many(
+        {"business_id": bid, "type": "ingreso", "$or": [{"sale_id": sid}, {"description": {"$regex": legacy}}]}
+    )
+    return {"ok": True, "restocked": restocked, "removed_transactions": removed.deleted_count}
 
 
 class SalePaymentIn(BaseModel):
@@ -671,7 +690,7 @@ async def add_sale_payment(bid: str, sid: str, data: SalePaymentIn, user: dict =
         raise HTTPException(409, "La venta cambió mientras registrabas el pago. Revisa el saldo e inténtalo de nuevo.")
     tx = Transaction(
         business_id=bid, type="ingreso", category="Venta",
-        amount=amount, description=f"Abono venta #{sid[:8]} · {SALE_PAYMENT_METHODS[data.method]}",
+        amount=amount, description=f"Abono venta #{sid[:8]} · {SALE_PAYMENT_METHODS[data.method]}", sale_id=sid,
     )
     await db.transactions.insert_one(tx.dict())
     updated = await db.sales.find_one({"id": sid, "business_id": bid}, {"_id": 0})
@@ -806,16 +825,26 @@ async def paypal_capture(bid: str, sid: str, user: dict = Depends(get_current_us
 
     paid_before = float(sale.get("paid", 0.0))
     if status.upper() == "COMPLETED":
-        new_paid = round(paid_before + captured_local, 2)
-        payment = SalePayment(amount=captured_local, method="paypal", note=f"USD {captured_value:.2f}")
-        await db.sales.update_one(
-            {"id": sid, "business_id": bid},
+        due_before = round(float(sale.get("total", 0.0)) - paid_before, 2)
+        # Rounding the order to whole US cents can leave a few local cents pending (L 100 -> USD 4.08 ->
+        # L 99.96); a shortfall under one US cent counts as paid in full, and the sale is never overpaid.
+        one_cent_local = 0.01 if currency == "USD" else 0.01 * rate
+        credited = due_before if due_before - captured_local < one_cent_local else captured_local
+        credited = max(0.0, min(credited, due_before))
+        new_paid = round(paid_before + credited, 2)
+        payment = SalePayment(amount=credited, method="paypal", note=f"USD {captured_value:.2f}")
+        res = await db.sales.update_one(
+            {"id": sid, "business_id": bid, "paypal_status": {"$ne": "captured"}},
             {"$set": {"paid": new_paid, "paypal_status": "captured"}, "$push": {"payments": payment.dict()}},
         )
+        if res.modified_count == 0:
+            raise HTTPException(400, "Este pago de PayPal ya fue registrado")
+        # The income is what PayPal actually delivered, even if it differs from what the sale needed.
         tx = Transaction(
             business_id=bid, type="ingreso", category="PayPal",
             amount=captured_local,
             description=f"PayPal venta #{sid[:8]} (USD {captured_value:.2f} @ {rate:.2f})",
+            sale_id=sid,
         )
         await db.transactions.insert_one(tx.dict())
         return {
@@ -855,6 +884,28 @@ async def delete_transaction(bid: str, tid: str, user: dict = Depends(get_curren
     await require_business(bid, user)
     await db.transactions.delete_one({"id": tid, "business_id": bid})
     return {"ok": True}
+
+
+# ---------------- Backup ----------------
+@api_router.get("/export")
+async def export_data(user: dict = Depends(get_current_user)):
+    """Everything the user owns as one JSON document to keep outside the database (the free Atlas
+    plan has no backups). Photos stay as links; their bytes would make the file too big to share."""
+    businesses = await db.businesses.find({"user_id": user["user_id"]}, {"_id": 0}).to_list(100)
+    out = []
+    for b in businesses:
+        q = {"business_id": b["id"]}
+        entry = {"business": b}
+        for name in ("products", "customers", "sales", "transactions", "stock_entries"):
+            entry[name] = await db[name].find(q, {"_id": 0}).sort("created_at", 1).to_list(20000)
+        out.append(entry)
+    return {
+        "app": "Mis Negocios",
+        "format": 1,
+        "exported_at": now_iso(),
+        "user": {"email": user.get("email", ""), "name": user.get("name", "")},
+        "businesses": out,
+    }
 
 
 # ---------------- Dashboard ----------------
