@@ -5,13 +5,15 @@ import Ionicons from "@react-native-vector-icons/ionicons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { FormScreen, Field, CardRow, AmountInput, formStyles, useLoadedForm } from "@/src/components/form-screen";
+import { CategoryPicker } from "@/src/components/category-picker";
 import { api } from "@/src/api";
 import { useBusiness, formatMoney } from "@/src/business-context";
 import { pickImage, describeUploadError, toRemoteUrl } from "@/src/image-utils";
 import { colors, radius, spacing } from "@/src/theme";
 
 export default function ProductForm() {
-  const { id } = useLocalSearchParams<{ id?: string }>();
+  // `category` comes from Inventario when it is filtered by one.
+  const { id, category: presetCategory } = useLocalSearchParams<{ id?: string; category?: string }>();
   const router = useRouter();
   const qc = useQueryClient();
   const { activeId, activeBusiness } = useBusiness();
@@ -24,7 +26,7 @@ export default function ProductForm() {
   });
 
   const [form, setForm] = useLoadedForm<any, any>({
-    name: "", description: "", category: "", material: "", sku: "",
+    name: "", description: "", category: presetCategory || "", material: "", sku: "",
     photos: [], unit_cost: "0", extra_costs: "0", sale_price: "0",
     stock: "0", min_stock: "0",
   }, existing, (p) => ({
@@ -180,21 +182,21 @@ export default function ProductForm() {
         </View>
         <TextInput style={formStyles.textarea} value={form.description} onChangeText={set("description")} multiline placeholderTextColor={colors.muted} />
       </View>
+      <Field label="Categoría">
+        <CategoryPicker value={form.category || ""} onChange={(category) => setForm((f: any) => ({ ...f, category }))} />
+      </Field>
       <View style={styles.row2}>
-        <View style={{ flex: 1 }}>
-          <Field label="Categoría">
-            <TextInput style={formStyles.input} value={form.category} onChangeText={set("category")} placeholder="Pulseras, collares..." placeholderTextColor={colors.muted} />
-          </Field>
-        </View>
         <View style={{ flex: 1 }}>
           <Field label="Material">
             <TextInput style={formStyles.input} value={form.material} onChangeText={set("material")} placeholder="Plata 925" placeholderTextColor={colors.muted} />
           </Field>
         </View>
+        <View style={{ flex: 1 }}>
+          <Field label="SKU / Código">
+            <TextInput style={formStyles.input} value={form.sku} onChangeText={set("sku")} autoCapitalize="characters" placeholder="PUL-001" placeholderTextColor={colors.muted} />
+          </Field>
+        </View>
       </View>
-      <Field label="SKU / Código">
-        <TextInput style={formStyles.input} value={form.sku} onChangeText={set("sku")} autoCapitalize="characters" placeholderTextColor={colors.muted} />
-      </Field>
 
       <Text style={formStyles.section}>Costos y precio</Text>
       <View style={formStyles.card}>

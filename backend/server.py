@@ -252,6 +252,17 @@ class ProductIn(BaseModel):
     min_stock: int = 0
 
 
+class Category(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    business_id: str
+    name: str
+    created_at: str = Field(default_factory=now_iso)
+
+
+class CategoryIn(BaseModel):
+    name: str
+
+
 class StockEntry(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     business_id: str
@@ -476,7 +487,118 @@ async def delete_business(bid: str, user: dict = Depends(get_current_user)):
     await db.sales.delete_many({"business_id": bid})
     await db.transactions.delete_many({"business_id": bid})
     await db.stock_entries.delete_many({"business_id": bid})
+    await db.categories.delete_many({"business_id": bid})
     return {"ok": True}
+
+
+# ---------------- Categories ----------------
+# Products keep their category as plain text (the catalogs group by it); this list is what the app
+# offers to pick from. Names are compared ignoring case and extra spaces.
+MAX_CATEGORY_LEN = 40
+
+
+def _clean_category(name) -> str:
+    return " ".join(str(name or "").split())
+
+
+def _name_pattern(name: str) -> dict:
+    """Mongo filter value matching `name` ignoring case and extra spaces."""
+    return {"$regex": r"^\s*" + r"\s+".join(re.escape(w) for w in name.split()) + r"\s*$", "$options": "i"}
+
+
+def _valid_category_name(name) -> str:
+    name = _clean_category(name)
+    if not name:
+        raise HTTPException(400, "Escribe el nombre de la categoría")
+    if len(name) > MAX_CATEGORY_LEN:
+        raise HTTPException(400, f"El nombre es muy largo (máximo {MAX_CATEGORY_LEN} letras)")
+    return name
+
+
+async def _resolve_category(bid: str, name) -> str:
+    """The listed spelling of a product's category, adding it to the list if it is new."""
+    name = _clean_category(name)
+    if not name:
+        return ""
+    found = await db.categories.find_one({"business_id": bid, "name": _name_pattern(name)}, {"_id": 0})
+    if found:
+        return found["name"]
+    await db.categories.insert_one(Category(business_id=bid, name=name[:MAX_CATEGORY_LEN]).dict())
+    return name[:MAX_CATEGORY_LEN]
+
+
+async def _category_count(bid: str, name: str) -> int:
+    return await db.products.count_documents({"business_id": bid, "category": _name_pattern(name)})
+
+
+@api_router.get("/businesses/{bid}/categories")
+async def list_categories(bid: str, user: dict = Depends(get_current_user)):
+    await require_business(bid, user)
+    products = await db.products.find({"business_id": bid}, {"_id": 0, "category": 1}).to_list(5000)
+    cats = []
+    known = set()
+    # Two first-time requests at once can both add the same category; keep the oldest copy.
+    for c in await db.categories.find({"business_id": bid}, {"_id": 0}).sort("created_at", 1).to_list(1000):
+        if c["name"].casefold() in known:
+            await db.categories.delete_one({"id": c["id"], "business_id": bid})
+        else:
+            known.add(c["name"].casefold())
+            cats.append(c)
+    counts: dict = {}
+    for p in products:
+        name = _clean_category(p.get("category"))
+        if not name:
+            continue
+        key = name.casefold()
+        counts[key] = counts.get(key, 0) + 1
+        # Categories typed on products before this list existed (or by older app versions) join it.
+        if key not in known:
+            c = Category(business_id=bid, name=name[:MAX_CATEGORY_LEN]).dict()
+            await db.categories.insert_one(dict(c))
+            cats.append(c)
+            known.add(key)
+    cats.sort(key=lambda c: c["name"].casefold())
+    return [{**c, "count": counts.get(c["name"].casefold(), 0)} for c in cats]
+
+
+@api_router.post("/businesses/{bid}/categories")
+async def create_category(bid: str, data: CategoryIn, user: dict = Depends(get_current_user)):
+    await require_business(bid, user)
+    name = _valid_category_name(data.name)
+    existing = await db.categories.find_one({"business_id": bid, "name": _name_pattern(name)}, {"_id": 0})
+    if existing:
+        raise HTTPException(409, f"Ya existe la categoría «{existing['name']}»")
+    c = Category(business_id=bid, name=name)
+    await db.categories.insert_one(c.dict())
+    return {**c.dict(), "count": await _category_count(bid, name)}
+
+
+@api_router.put("/businesses/{bid}/categories/{cid}")
+async def rename_category(bid: str, cid: str, data: CategoryIn, user: dict = Depends(get_current_user)):
+    """Renames the category and moves its products to the new name."""
+    await require_business(bid, user)
+    cat = await db.categories.find_one({"id": cid, "business_id": bid}, {"_id": 0})
+    if not cat:
+        raise HTTPException(404, "Categoría no encontrada")
+    name = _valid_category_name(data.name)
+    other = await db.categories.find_one({"business_id": bid, "name": _name_pattern(name), "id": {"$ne": cid}}, {"_id": 0})
+    if other:
+        raise HTTPException(409, f"Ya existe la categoría «{other['name']}»")
+    await db.categories.update_one({"id": cid, "business_id": bid}, {"$set": {"name": name}})
+    await db.products.update_many({"business_id": bid, "category": _name_pattern(cat["name"])}, {"$set": {"category": name}})
+    return {**cat, "name": name, "count": await _category_count(bid, name)}
+
+
+@api_router.delete("/businesses/{bid}/categories/{cid}")
+async def delete_category(bid: str, cid: str, user: dict = Depends(get_current_user)):
+    """Removes the category; its products stay, without a category."""
+    await require_business(bid, user)
+    cat = await db.categories.find_one({"id": cid, "business_id": bid}, {"_id": 0})
+    if not cat:
+        return {"ok": True, "uncategorized": 0}
+    await db.categories.delete_one({"id": cid, "business_id": bid})
+    res = await db.products.update_many({"business_id": bid, "category": _name_pattern(cat["name"])}, {"$set": {"category": ""}})
+    return {"ok": True, "uncategorized": res.modified_count}
 
 
 # ---------------- Products ----------------
@@ -490,6 +612,7 @@ async def list_products(bid: str, user: dict = Depends(get_current_user)):
 @api_router.post("/businesses/{bid}/products", response_model=Product)
 async def create_product(bid: str, data: ProductIn, user: dict = Depends(get_current_user)):
     await require_business(bid, user)
+    data.category = await _resolve_category(bid, data.category)
     p = Product(business_id=bid, **data.dict())
     await db.products.insert_one(p.dict())
     return p
@@ -507,6 +630,7 @@ async def get_product(bid: str, pid: str, user: dict = Depends(get_current_user)
 @api_router.put("/businesses/{bid}/products/{pid}", response_model=Product)
 async def update_product(bid: str, pid: str, data: ProductIn, user: dict = Depends(get_current_user)):
     await require_business(bid, user)
+    data.category = await _resolve_category(bid, data.category)
     res = await db.products.update_one({"id": pid, "business_id": bid}, {"$set": data.dict()})
     if res.matched_count == 0:
         raise HTTPException(404, "Producto no encontrado")
@@ -897,7 +1021,7 @@ async def export_data(user: dict = Depends(get_current_user)):
     for b in businesses:
         q = {"business_id": b["id"]}
         entry = {"business": b}
-        for name in ("products", "customers", "sales", "transactions", "stock_entries"):
+        for name in ("products", "categories", "customers", "sales", "transactions", "stock_entries"):
             entry[name] = await db[name].find(q, {"_id": 0}).sort("created_at", 1).to_list(20000)
         out.append(entry)
     return {

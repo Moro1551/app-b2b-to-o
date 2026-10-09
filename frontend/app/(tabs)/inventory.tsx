@@ -5,11 +5,12 @@ import Ionicons from "@react-native-vector-icons/ionicons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useQuery } from "@tanstack/react-query";
 import { TopHeader, HeaderAction } from "@/src/components/top-header";
-import { SearchBar, FilterChips, FilterChip } from "@/src/components/list-tools";
+import { SearchBar, FilterChips, FilterChip, ChipAction } from "@/src/components/list-tools";
 import { EmptyState } from "@/src/components/empty-state";
 import { useBusiness, formatMoney } from "@/src/business-context";
 import { toRemoteUrl } from "@/src/image-utils";
 import { api } from "@/src/api";
+import { sameCategory, useCategories } from "@/src/categories";
 import { colors, radius, spacing } from "@/src/theme";
 
 const isLow = (p: any) => (p.stock ?? 0) <= (p.min_stock ?? 0);
@@ -31,11 +32,7 @@ export default function Inventory() {
     enabled: !!activeId,
   });
 
-  const categories = useMemo(() => {
-    const s = new Set<string>();
-    products.forEach((p: any) => p.category && s.add(p.category));
-    return Array.from(s);
-  }, [products]);
+  const { data: categories = [] } = useCategories();
 
   const lowCount = useMemo(() => products.filter(isLow).length, [products]);
 
@@ -52,7 +49,7 @@ export default function Inventory() {
     if (filter === "bajo") {
       list = list.filter(isLow);
     } else if (filter !== "todos") {
-      list = list.filter((p: any) => p.category === filter);
+      list = list.filter((p: any) => sameCategory(p.category, filter));
     }
     return list;
   }, [products, query, filter]);
@@ -63,6 +60,9 @@ export default function Inventory() {
   );
 
   const currency = activeBusiness?.currency || "L";
+  // With a category filter on, a new product starts in that category.
+  const inCategory = filter !== "todos" && filter !== "bajo" ? filter : undefined;
+  const newProduct = () => router.push({ pathname: "/product-form", params: inCategory ? { category: inCategory } : {} });
   // Fixed width so a lone card in the last row keeps the size of the others.
   const cardWidth = (width - spacing.lg * 2 - spacing.md) / 2;
 
@@ -70,7 +70,7 @@ export default function Inventory() {
     <View style={styles.wrap}>
       <TopHeader
         title="Inventario"
-        right={<HeaderAction icon="add" label="Nuevo" onPress={() => router.push("/product-form")} testID="add-product-btn" />}
+        right={<HeaderAction icon="add" label="Nuevo" onPress={newProduct} testID="add-product-btn" />}
       />
       {(isLoading || products.length > 0) && (
         <View style={styles.tools}>
@@ -82,10 +82,11 @@ export default function Inventory() {
             style={styles.search}
           />
           <FilterChips>
+            <ChipAction icon="pricetags-outline" label="Categorías" onPress={() => router.push("/categories")} testID="categories-btn" />
             <FilterChip id="Todos" label={`Todos · ${products.length}`} active={filter === "todos"} onPress={() => setFilter("todos")} />
             <FilterChip id="Bajo stock" label={`Bajo stock · ${lowCount}`} active={filter === "bajo"} onPress={() => setFilter("bajo")} />
             {categories.map((c) => (
-              <FilterChip key={c} id={c} label={c} active={filter === c} onPress={() => setFilter(c)} />
+              <FilterChip key={c.id} id={c.name} label={`${c.name} · ${c.count}`} active={filter === c.name} onPress={() => setFilter(c.name)} />
             ))}
           </FilterChips>
           {!isLoading && (
@@ -106,7 +107,9 @@ export default function Inventory() {
           title="No hay productos"
           message="Añade tu primer producto para comenzar a gestionar tu inventario."
           actionLabel="Añadir producto"
-          action={() => router.push("/product-form")}
+          action={newProduct}
+          secondaryLabel="Crear categorías primero"
+          secondaryAction={() => router.push("/categories")}
         />
       ) : (
         <FlatList
