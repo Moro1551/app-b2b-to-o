@@ -295,6 +295,16 @@ class SaleItem(BaseModel):
     unit_price: float
 
 
+SALE_PAYMENT_METHODS = {"efectivo": "Efectivo", "transferencia": "Transferencia", "otro": "Otro"}
+
+
+class SalePayment(BaseModel):
+    amount: float
+    method: str  # "venta" (paid when the sale was created) | "paypal" | a key of SALE_PAYMENT_METHODS
+    note: Optional[str] = ""
+    created_at: str = Field(default_factory=now_iso)
+
+
 class Sale(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     business_id: str
@@ -303,6 +313,8 @@ class Sale(BaseModel):
     items: List[SaleItem] = []
     total: float = 0.0
     paid: float = 0.0
+    # Sales created before this field existed have paid > sum(payments).
+    payments: List[SalePayment] = []
     note: Optional[str] = ""
     paypal_order_id: Optional[str] = ""
     paypal_status: Optional[str] = ""  # "created" | "approved" | "captured" | "failed"
@@ -594,6 +606,7 @@ async def create_sale(bid: str, data: SaleIn, user: dict = Depends(get_current_u
         items=data.items,
         total=total,
         paid=data.paid,
+        payments=[SalePayment(amount=data.paid, method="venta")] if data.paid > 0 else [],
         note=data.note or "",
     )
     await db.sales.insert_one(sale.dict())
@@ -616,6 +629,49 @@ async def delete_sale(bid: str, sid: str, user: dict = Depends(get_current_user)
     await require_business(bid, user)
     await db.sales.delete_one({"id": sid, "business_id": bid})
     return {"ok": True}
+
+
+class SalePaymentIn(BaseModel):
+    amount: float
+    method: str = "efectivo"
+    note: Optional[str] = ""
+
+
+@api_router.post("/businesses/{bid}/sales/{sid}/payments", response_model=Sale)
+async def add_sale_payment(bid: str, sid: str, data: SalePaymentIn, user: dict = Depends(get_current_user)):
+    """Registers a cash/transfer payment (full or partial) for a sale with a pending balance."""
+    await require_business(bid, user)
+    if data.method not in SALE_PAYMENT_METHODS:
+        raise HTTPException(400, "Método de pago no válido")
+    amount = round(float(data.amount), 2)
+    if amount <= 0:
+        raise HTTPException(400, "El monto debe ser mayor que cero")
+    sale = await db.sales.find_one({"id": sid, "business_id": bid}, {"_id": 0})
+    if not sale:
+        raise HTTPException(404, "Venta no encontrada")
+    paid_before = float(sale.get("paid", 0.0))
+    due = round(float(sale.get("total", 0.0)) - paid_before, 2)
+    if due <= 0:
+        raise HTTPException(400, "La venta ya está pagada")
+    if amount > due:
+        raise HTTPException(400, f"El monto supera lo pendiente ({due:.2f})")
+
+    payment = SalePayment(amount=amount, method=data.method, note=(data.note or "").strip())
+    # Matching on the previous "paid" rejects a second, simultaneous payment instead of double-counting it.
+    # (No default: None also matches a document without the field.)
+    res = await db.sales.update_one(
+        {"id": sid, "business_id": bid, "paid": sale.get("paid")},
+        {"$set": {"paid": round(paid_before + amount, 2)}, "$push": {"payments": payment.dict()}},
+    )
+    if res.modified_count == 0:
+        raise HTTPException(409, "La venta cambió mientras registrabas el pago. Revisa el saldo e inténtalo de nuevo.")
+    tx = Transaction(
+        business_id=bid, type="ingreso", category="Venta",
+        amount=amount, description=f"Abono venta #{sid[:8]} · {SALE_PAYMENT_METHODS[data.method]}",
+    )
+    await db.transactions.insert_one(tx.dict())
+    updated = await db.sales.find_one({"id": sid, "business_id": bid}, {"_id": 0})
+    return Sale(**updated)
 
 
 # ---------------- PayPal (Sandbox) ----------------
@@ -699,6 +755,9 @@ async def paypal_capture(bid: str, sid: str, user: dict = Depends(get_current_us
     order_id = sale.get("paypal_order_id")
     if not order_id:
         raise HTTPException(400, "No hay orden PayPal pendiente para esta venta")
+    # PayPal answers ORDER_ALREADY_CAPTURED with the same amount, which would be added again.
+    if sale.get("paypal_status") == "captured":
+        raise HTTPException(400, "Este pago de PayPal ya fue registrado")
 
     token = await paypal_token()
     async with httpx.AsyncClient(timeout=25.0) as cli:
@@ -744,9 +803,10 @@ async def paypal_capture(bid: str, sid: str, user: dict = Depends(get_current_us
     paid_before = float(sale.get("paid", 0.0))
     if status.upper() == "COMPLETED":
         new_paid = round(paid_before + captured_local, 2)
+        payment = SalePayment(amount=captured_local, method="paypal", note=f"USD {captured_value:.2f}")
         await db.sales.update_one(
             {"id": sid, "business_id": bid},
-            {"$set": {"paid": new_paid, "paypal_status": "captured"}},
+            {"$set": {"paid": new_paid, "paypal_status": "captured"}, "$push": {"payments": payment.dict()}},
         )
         tx = Transaction(
             business_id=bid, type="ingreso", category="PayPal",

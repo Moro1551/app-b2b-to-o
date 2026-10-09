@@ -59,6 +59,8 @@ export const api = {
   listSales: (bid: string) => request<any[]>(`/businesses/${bid}/sales`),
   createSale: (bid: string, data: any) => request<any>(`/businesses/${bid}/sales`, { method: "POST", body: JSON.stringify(data) }),
   deleteSale: (bid: string, sid: string) => request<any>(`/businesses/${bid}/sales/${sid}`, { method: "DELETE" }),
+  addSalePayment: (bid: string, sid: string, data: { amount: number; method: string; note?: string }) =>
+    request<any>(`/businesses/${bid}/sales/${sid}/payments`, { method: "POST", body: JSON.stringify(data) }),
 
   listTransactions: (bid: string) => request<any[]>(`/businesses/${bid}/transactions`),
   createTransaction: (bid: string, data: any) => request<any>(`/businesses/${bid}/transactions`, { method: "POST", body: JSON.stringify(data) }),

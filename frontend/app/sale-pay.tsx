@@ -1,18 +1,29 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { View, Text, StyleSheet, Pressable, ScrollView, ActivityIndicator, Alert, Share, Platform } from "react-native";
 import Ionicons from "@react-native-vector-icons/ionicons";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as Linking from "expo-linking";
 import * as WebBrowser from "expo-web-browser";
 import { api, API_BASE } from "@/src/api";
 import { getAuthToken } from "@/src/auth-context";
 import { useBusiness, formatMoney } from "@/src/business-context";
 import { SubHeader } from "@/src/components/top-header";
-import { SectionHead, CardRow, formStyles } from "@/src/components/form-screen";
+import { SectionHead, CardRow, AmountInput, Segmented, formStyles, useLoadedForm } from "@/src/components/form-screen";
 import { EmptyState } from "@/src/components/empty-state";
 import { dayLabel, timeLabel } from "@/src/utils/dates";
 import { colors, radius, spacing } from "@/src/theme";
+
+type Method = "efectivo" | "transferencia" | "otro";
+
+// Every method the server records, including the ones set automatically ("venta", "paypal").
+const METHOD_INFO: Record<string, { label: string; icon: any }> = {
+  venta: { label: "Al registrar la venta", icon: "receipt-outline" },
+  efectivo: { label: "Efectivo", icon: "cash-outline" },
+  transferencia: { label: "Transferencia", icon: "swap-horizontal-outline" },
+  otro: { label: "Otro", icon: "ellipsis-horizontal" },
+  paypal: { label: "PayPal", icon: "card-outline" },
+};
 
 export default function SalePay() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -20,6 +31,7 @@ export default function SalePay() {
   const qc = useQueryClient();
   const { activeId, activeBusiness } = useBusiness();
   const [loadingAction, setLoadingAction] = useState<string | null>(null);
+  const [method, setMethod] = useState<Method>("efectivo");
 
   const { data: sales = [], isLoading } = useQuery({
     queryKey: ["sales", activeId],
@@ -29,11 +41,47 @@ export default function SalePay() {
   const sale = sales.find((s: any) => s.id === id);
 
   const currency = activeBusiness?.currency || "L";
+  const symbol = currency === "USD" ? "$" : "L";
   const total = sale?.total || 0;
   const paid = sale?.paid || 0;
   const due = Math.max(0, total - paid);
   // Ignore rounding leftovers when comparing money amounts.
   const isFullyPaid = !!sale && due <= 0.005;
+
+  // Starts at the whole pending balance, and again after each payment refreshes the sale.
+  const [amount, setAmount] = useLoadedForm("", sale, (s: any) => Math.max(0, s.total - s.paid).toFixed(2));
+  const amountNum = parseFloat(amount.replace(",", ".")) || 0;
+  const leftAfter = Math.max(0, due - amountNum);
+
+  const payments: any[] = sale?.payments || [];
+  // Sales from before the payment history only know the paid total.
+  const untracked = paid - payments.reduce((s, p) => s + (p.amount || 0), 0);
+
+  const addPayment = useMutation({
+    mutationFn: () => api.addSalePayment(activeId!, sale.id, { amount: Number(amountNum.toFixed(2)), method }),
+    onSuccess: (updated: any) => {
+      qc.invalidateQueries();
+      const left = Math.max(0, updated.total - updated.paid);
+      Alert.alert(
+        "Pago registrado",
+        left <= 0.005 ? "La venta quedó pagada en su totalidad." : `Queda pendiente ${formatMoney(left, currency)}.`,
+      );
+    },
+    onError: (e: any) => Alert.alert("No se pudo registrar el pago", e?.message || "Inténtalo de nuevo."),
+  });
+
+  // isPending only updates on the next render, so two quick taps could both get through.
+  const submitting = useRef(false);
+  const registerPayment = () => {
+    if (submitting.current) return;
+    if (amountNum <= 0) { Alert.alert("Escribe el monto recibido"); return; }
+    if (amountNum > due + 0.005) {
+      Alert.alert("Monto mayor a lo pendiente", `Lo pendiente es ${formatMoney(due, currency)}.`);
+      return;
+    }
+    submitting.current = true;
+    addPayment.mutate(undefined, { onSettled: () => { submitting.current = false; } });
+  };
   // PayPal charges in USD; convert the pending amount with the business' rate.
   const usdRate = Number(activeBusiness?.usd_rate) || 24.5;
   const inUsd = (activeBusiness?.currency || "L").toUpperCase() === "USD";
@@ -216,7 +264,79 @@ export default function SalePay() {
             </View>
           ) : (
             <>
-              <SectionHead title="Cobrar con PayPal" />
+              <SectionHead
+                title="Registrar pago"
+                action={amountNum.toFixed(2) !== due.toFixed(2) ? "Todo lo pendiente" : undefined}
+                onAction={() => setAmount(due.toFixed(2))}
+                actionTestID="pay-fill-due"
+              />
+              <View style={formStyles.card}>
+                <View style={styles.methodRow}>
+                  <Segmented
+                    options={[["efectivo", "Efectivo"], ["transferencia", "Transferencia"], ["otro", "Otro"]]}
+                    value={method}
+                    onChange={setMethod}
+                    testIDPrefix="pay-method"
+                  />
+                </View>
+                <CardRow label="Monto recibido">
+                  <AmountInput symbol={symbol} value={amount} onChangeText={setAmount} placeholder="0.00" testID="pay-amount" strong />
+                </CardRow>
+                <CardRow label="Queda pendiente" muted last>
+                  <Text style={[styles.value, { color: leftAfter <= 0.005 ? colors.success : colors.warning }]}>
+                    {formatMoney(leftAfter, currency)}
+                  </Text>
+                </CardRow>
+                <View style={styles.methodRow}>
+                  <Pressable
+                    style={[styles.btn, styles.btnPrimary, addPayment.isPending && { opacity: 0.6 }]}
+                    onPress={registerPayment}
+                    disabled={addPayment.isPending || !!loadingAction}
+                    testID="pay-register"
+                  >
+                    {addPayment.isPending ? <ActivityIndicator color={colors.onBrandPrimary} /> : <>
+                      <Ionicons name="checkmark" size={18} color={colors.onBrandPrimary} />
+                      <Text style={styles.btnPrimaryTxt}>Registrar pago</Text>
+                    </>}
+                  </Pressable>
+                </View>
+              </View>
+            </>
+          )}
+
+          {(payments.length > 0 || untracked > 0.005) && (
+            <>
+              <SectionHead title="Historial de pagos" />
+              <View style={formStyles.card}>
+                {untracked > 0.005 && (
+                  <PaymentRow
+                    icon="time-outline"
+                    label="Pagos anteriores"
+                    amount={formatMoney(untracked, currency)}
+                    last={payments.length === 0}
+                  />
+                )}
+                {payments.map((p, i) => {
+                  const info = METHOD_INFO[p.method] || METHOD_INFO.otro;
+                  const at = new Date(p.created_at);
+                  return (
+                    <PaymentRow
+                      key={`${p.created_at}-${i}`}
+                      icon={info.icon}
+                      label={info.label}
+                      meta={`${dayLabel(at)}, ${timeLabel(at)}${p.note ? ` · ${p.note}` : ""}`}
+                      amount={formatMoney(p.amount, currency)}
+                      last={i === payments.length - 1}
+                    />
+                  );
+                })}
+              </View>
+            </>
+          )}
+
+          {!isFullyPaid && (
+            <>
+              <SectionHead title="O cobrar con PayPal" />
               <View style={[formStyles.card, styles.ppCard]}>
                 <View style={styles.ppHead}>
                   <View style={styles.ppLogo}>
@@ -261,7 +381,7 @@ export default function SalePay() {
                   </>}
                 </Pressable>
 
-                {!!sale.paypal_order_id && (
+                {!!sale.paypal_order_id && sale.paypal_status !== "captured" && (
                   <Pressable
                     style={[styles.btn, styles.btnGhost, loadingAction === "verify" && { opacity: 0.6 }]}
                     onPress={verifyPayment}
@@ -286,8 +406,33 @@ export default function SalePay() {
   );
 }
 
+function PaymentRow({ icon, label, meta, amount, last }: {
+  icon: any; label: string; meta?: string; amount: string; last?: boolean;
+}) {
+  return (
+    <View style={[styles.payRow, !last && styles.payRowDivider]}>
+      <View style={styles.payIcon}>
+        <Ionicons name={icon} size={16} color={colors.success} />
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.payLabel}>{label}</Text>
+        {!!meta && <Text style={styles.muted} numberOfLines={1}>{meta}</Text>}
+      </View>
+      <Text style={[styles.value, { color: colors.success }]}>+{amount}</Text>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   wrap: { flex: 1, backgroundColor: colors.surfaceSecondary },
+  methodRow: { padding: spacing.md },
+  payRow: { flexDirection: "row", alignItems: "center", gap: spacing.md, paddingHorizontal: spacing.md, paddingVertical: 12 },
+  payRowDivider: { borderBottomWidth: 1, borderBottomColor: colors.border },
+  payIcon: {
+    width: 32, height: 32, borderRadius: radius.sm, backgroundColor: colors.successTertiary,
+    justifyContent: "center", alignItems: "center",
+  },
+  payLabel: { fontSize: 14, fontWeight: "600", color: colors.onSurface },
   muted: { fontSize: 12, color: colors.muted, marginTop: 2 },
   saleHead: {
     flexDirection: "row", alignItems: "center", gap: spacing.md, padding: spacing.md,
@@ -333,6 +478,8 @@ const styles = StyleSheet.create({
     flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm,
     paddingVertical: 14, borderRadius: radius.md,
   },
+  btnPrimary: { backgroundColor: colors.brandPrimary },
+  btnPrimaryTxt: { color: colors.onBrandPrimary, fontWeight: "700", fontSize: 15 },
   btnPaypal: { backgroundColor: "#0070BA" },
   btnPaypalTxt: { color: "#FFFFFF", fontWeight: "700", fontSize: 15 },
   btnOutline: { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.borderStrong },
