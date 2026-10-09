@@ -1527,18 +1527,48 @@ async def ai_product_description(bid: str, data: AIDescIn, user: dict = Depends(
     if not data.name.strip():
         raise HTTPException(400, "Nombre requerido")
     system = (
-        "Eres un redactor experto en comercio minorista. Genera descripciones de producto en español, "
-        "en 2 o 3 oraciones, con tono cálido y profesional. No incluyas precio ni emojis. "
-        "No inventes materiales ni tallas que no te hayan dado."
+        "Escribes las descripciones del catálogo de una tienda elegante, en español. "
+        "Escribe una sola frase, o dos muy cortas, de máximo 20 palabras en total. "
+        "Lenguaje sencillo, sereno y elegante: destaca el material o el detalle que hace especial al producto. "
+        "Sin frases de vendedor (nada de «ideal para cualquier ocasión», «no te lo pierdas» o «perfecto para»), "
+        "sin signos de exclamación, sin emojis, sin comillas y sin precio. No repitas el nombre del producto. "
+        "Usa solo los datos que te den: no inventes materiales, medidas, tallas ni piedras. "
+        "Responde únicamente con la descripción.\n\n"
+        "Ejemplos del estilo:\n"
+        "Pulsera tejida de plata (plata 925) → Tejida a mano en plata 925, de brillo suave y cierre seguro.\n"
+        "Collar de perlas naturales (perla de río) → Perlas de río de lustre delicado para un toque clásico.\n"
+        "Café de altura 340 g → Grano de altura tostado en pequeños lotes, de aroma intenso y final suave."
     )
     prompt = (
         f"Producto: {data.name}\n"
         f"Categoría: {data.category or 'no especificada'}\n"
-        f"Material: {data.material or 'no especificado'}\n\n"
-        "Escribe una descripción corta y atractiva para catálogo."
+        f"Material: {data.material or 'no especificado'}"
     )
     description = await gemini_generate(system, [{"role": "user", "parts": [{"text": prompt}]}])
-    return {"description": description}
+    return {"description": _tidy_description(description)}
+
+
+_EMOJI = re.compile("[\U0001F000-\U0001FAFF☀-➿️]")
+
+
+def _tidy_description(text: str, max_sentences: int = 2, max_chars: int = 180) -> str:
+    """Keeps the AI's product description short and plain even when it ignores the instructions."""
+    t = _EMOJI.sub("", text or "")
+    t = re.sub(r"[*_#`]+", "", t)  # Markdown emphasis
+    t = re.sub(r"^\s*(descripci[oó]n|description)\s*:\s*", "", t, flags=re.I)
+    t = " ".join(t.split()).strip(" \"'“”«»")
+    t = t.replace("¡", "").replace("!", ".")
+    t = " ".join(re.sub(r"\s*(\.{2,}|…)\s*", " ", t).split())  # "ligero... para" → "ligero para"
+    # A sentence ends at "." or "?" followed by a space, so "1.5 cm" stays whole.
+    t = " ".join(re.split(r"(?<=[.?])\s+", t)[:max_sentences]).strip()
+    if len(t) > max_chars:
+        cut = t[:max_chars]
+        end = max(cut.rfind(". "), cut.rfind("? "))
+        t = cut[: end + 1] if end > 40 else cut.rsplit(" ", 1)[0].rstrip(",;:")
+    t = t.strip()
+    if t and t[-1] not in ".?":
+        t += "."
+    return t[:1].upper() + t[1:]
 
 
 app.include_router(api_router)

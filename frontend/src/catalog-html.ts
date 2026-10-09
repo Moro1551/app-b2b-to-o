@@ -34,9 +34,9 @@ const STONE = "#ECEAE6";
 const MONTHS = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
 
 // Fine grain over the background and the band, like the stone paper of a printed lookbook.
-const GRAIN = `url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='220' height='220'><filter id='g'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.3  0 0 0 0 0.28  0 0 0 0 0.25  0 0 0 0.10 0'/></filter><rect width='100%' height='100%' filter='url(%23g)'/></svg>")`;
+export const GRAIN = `url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='220' height='220'><filter id='g'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.3  0 0 0 0 0.28  0 0 0 0 0.25  0 0 0 0.10 0'/></filter><rect width='100%' height='100%' filter='url(%23g)'/></svg>")`;
 
-function esc(s: unknown): string {
+export function esc(s: unknown): string {
   return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
 }
 
@@ -50,6 +50,26 @@ function bareUrl(value?: string): string {
   return (value || "").trim().replace(/^https?:\/\//i, "").replace(/\/$/, "");
 }
 
+/**
+ * The business' most useful link for the foot "pill" (website, else Instagram, else phone) and the
+ * rest of its contact details, already HTML-escaped.
+ */
+export function businessContacts(b: CatalogBusiness): { pill: string; contacts: string[] } {
+  const ig = handle(b.instagram);
+  const pill = bareUrl(b.website) || ig || (b.phone ? `Pedidos: ${b.phone}` : "");
+  const contacts = [
+    b.phone && !pill.includes(b.phone) && `Tel. / WhatsApp ${b.phone}`,
+    b.email,
+    ig && ig !== pill && `Instagram ${ig}`,
+    handle(b.facebook) && `Facebook ${handle(b.facebook).slice(1)}`,
+    handle(b.tiktok) && `TikTok ${handle(b.tiktok)}`,
+    b.address,
+  ].filter((c): c is string => !!c).map(esc);
+  return { pill: esc(pill), contacts };
+}
+
+export const brandColor = (b: CatalogBusiness) => (/^#[0-9a-f]{6}$/i.test(b.color || "") ? b.color! : DEFAULT_COLOR);
+
 const titleCase = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 function chunk<T>(list: T[], size: number): T[][] {
@@ -59,7 +79,7 @@ function chunk<T>(list: T[], size: number): T[][] {
 }
 
 export function buildCatalogHtml({ business: b, products, formatPrice, resolveUrl, fontCss = "", date = new Date() }: Options): string {
-  const brand = /^#[0-9a-f]{6}$/i.test(b.color || "") ? b.color! : DEFAULT_COLOR;
+  const brand = brandColor(b);
 
   // Products grouped by category (alphabetical, uncategorized last), keeping their order inside each.
   const catOf = (p: CatalogProduct) => (p.category || "").trim();
@@ -71,16 +91,8 @@ export function buildCatalogHtml({ business: b, products, formatPrice, resolveUr
     + (categories.length > MAX_CATEGORIES_SHOWN ? "<i>|</i>Y MÁS" : "");
 
   // The most useful link goes in the pill; the rest of the contact details on the line above it.
-  const ig = handle(b.instagram);
-  const pill = bareUrl(b.website) || ig || (b.phone ? `Pedidos: ${b.phone}` : "");
-  const contacts = [
-    b.phone && !pill.includes(b.phone) && `Tel. / WhatsApp ${b.phone}`,
-    b.email,
-    ig && ig !== pill && `Instagram ${ig}`,
-    handle(b.facebook) && `Facebook ${handle(b.facebook).slice(1)}`,
-    handle(b.tiktok) && `TikTok ${handle(b.tiktok)}`,
-    b.address,
-  ].filter(Boolean).map(esc).join("<i>·</i>");
+  const { pill, contacts: contactList } = businessContacts(b);
+  const contacts = contactList.join("<i>·</i>");
 
   const logoUrl = b.logo ? resolveUrl(b.logo) : "";
   const initial = esc((b.name || "?").trim().charAt(0).toUpperCase());
@@ -119,7 +131,7 @@ export function buildCatalogHtml({ business: b, products, formatPrice, resolveUr
         ${contacts ? `<p class="contacts">${contacts}</p>` : ""}
         <div class="foot">
           <span>${esc(when)}</span>
-          ${pill ? `<b class="pill">${esc(pill)}</b>` : "<b></b>"}
+          ${pill ? `<b class="pill">${pill}</b>` : "<b></b>"}
           <span>${pages.length > 1 ? `${i + 1} / ${pages.length}` : ""}</span>
         </div>
       </footer>

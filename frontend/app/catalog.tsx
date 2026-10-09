@@ -13,7 +13,7 @@ import { SubHeader } from "@/src/components/top-header";
 import { SectionHead, formStyles } from "@/src/components/form-screen";
 import { buildCatalogHtml } from "@/src/catalog-html";
 import { catalogFontCss } from "@/src/catalog-fonts";
-import { CatalogPreview } from "@/src/components/catalog-preview";
+import { PrintPreview } from "@/src/components/print-preview";
 import { colors, radius, spacing } from "@/src/theme";
 
 export default function Catalog() {
@@ -195,12 +195,19 @@ export default function Catalog() {
           </Text>
         </View>
       </ScrollView>
-      {Platform.OS === "web" && <CatalogPreview html={previewHtml} onClose={() => setPreviewHtml(null)} />}
+      {Platform.OS === "web" && (
+        <PrintPreview html={previewHtml} title={previewTitle(previewHtml)} pageWidth={816} onClose={() => setPreviewHtml(null)} />
+      )}
     </View>
   );
 }
 
 const PAGE = { width: 612, height: 792, textZoom: 100 };
+
+function previewTitle(html: string | null) {
+  const pages = (html?.match(/class="page"/g) || []).length || 1;
+  return `Vista previa · ${pages} ${pages === 1 ? "página" : "páginas"}`;
+}
 
 // WhatsApp's own brand greens, so the share option is recognizable.
 const WHATSAPP = "#25D366";

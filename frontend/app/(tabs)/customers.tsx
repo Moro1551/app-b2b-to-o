@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { View, Text, StyleSheet, Pressable, FlatList, ActivityIndicator, Linking } from "react-native";
+import { View, Text, StyleSheet, Pressable, FlatList, ActivityIndicator } from "react-native";
 import Ionicons from "@react-native-vector-icons/ionicons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useQuery } from "@tanstack/react-query";
@@ -8,6 +8,7 @@ import { SearchBar, FilterChips, FilterChip } from "@/src/components/list-tools"
 import { EmptyState } from "@/src/components/empty-state";
 import { useBusiness, formatMoney } from "@/src/business-context";
 import { api } from "@/src/api";
+import { openWhatsapp, paymentReminder } from "@/src/whatsapp";
 import { colors, radius, spacing } from "@/src/theme";
 
 type Stats = { count: number; total: number; due: number };
@@ -71,10 +72,13 @@ export default function Customers() {
   const currency = activeBusiness?.currency || "L";
   const count = (n: number) => (salesReady ? ` · ${n}` : "");
 
-  const openWhatsapp = (phone: string) => {
-    const clean = (phone || "").replace(/[^\d+]/g, "");
-    if (!clean) return;
-    Linking.openURL(`https://wa.me/${clean.replace(/^\+/, "")}`);
+  // Customers who owe get the chat opened with a reminder of their balance, ready to send.
+  const contact = (c: any) => {
+    if (!hasDebt(stats.get(c.id))) { openWhatsapp(c.phone); return; }
+    openWhatsapp(c.phone, paymentReminder({
+      customerName: c.name, businessName: activeBusiness?.name, currency,
+      sales: sales.filter((s: any) => s.customer_id === c.id),
+    }));
   };
 
   return (
@@ -133,7 +137,7 @@ export default function Customers() {
               showStats={salesReady}
               currency={currency}
               onPress={() => router.push({ pathname: "/customer-form", params: { id: item.id } })}
-              onWhatsapp={() => openWhatsapp(item.phone)}
+              onWhatsapp={() => contact(item)}
             />
           )}
           ListEmptyComponent={<Text style={styles.noResults}>Ningún cliente coincide con la búsqueda.</Text>}
@@ -176,7 +180,13 @@ function CustomerRow({ item, stats, showStats, currency, onPress, onWhatsapp }: 
         </View>
       )}
       {item.phone ? (
-        <Pressable onPress={onWhatsapp} style={styles.waBtn} testID={`wa-${item.id}`} hitSlop={6}>
+        <Pressable
+          onPress={onWhatsapp}
+          style={[styles.waBtn, hasDebt(stats) && styles.waBtnDebt]}
+          testID={`wa-${item.id}`}
+          hitSlop={6}
+          accessibilityLabel={hasDebt(stats) ? `Recordar pago a ${item.name} por WhatsApp` : `WhatsApp de ${item.name}`}
+        >
           <Ionicons name="logo-whatsapp" size={18} color={colors.success} />
         </Pressable>
       ) : (
@@ -216,5 +226,7 @@ const styles = StyleSheet.create({
     width: 36, height: 36, borderRadius: radius.sm, borderWidth: 1, borderColor: colors.border,
     backgroundColor: colors.surface, justifyContent: "center", alignItems: "center",
   },
+  // Marks that the button sends a payment reminder.
+  waBtnDebt: { borderColor: colors.warning, backgroundColor: colors.warningTertiary },
   waSpacer: { width: 36 },
 });
