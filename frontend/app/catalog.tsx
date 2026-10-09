@@ -11,6 +11,9 @@ import { useBusiness, formatMoney } from "@/src/business-context";
 import { toRemoteUrl, uploadAnyFile } from "@/src/image-utils";
 import { SubHeader } from "@/src/components/top-header";
 import { SectionHead, formStyles } from "@/src/components/form-screen";
+import { buildCatalogHtml } from "@/src/catalog-html";
+import { catalogFontCss } from "@/src/catalog-fonts";
+import { CatalogPreview } from "@/src/components/catalog-preview";
 import { colors, radius, spacing } from "@/src/theme";
 
 export default function Catalog() {
@@ -18,6 +21,7 @@ export default function Catalog() {
   const { activeId, activeBusiness } = useBusiness();
   const [generating, setGenerating] = useState(false);
   const [sharingWa, setSharingWa] = useState(false);
+  const [previewHtml, setPreviewHtml] = useState<string | null>(null);
 
   const { data: products = [], isLoading } = useQuery({
     queryKey: ["products", activeId],
@@ -27,59 +31,26 @@ export default function Catalog() {
 
   const currency = activeBusiness?.currency || "L";
 
-  const buildHtml = () => {
-    const b = activeBusiness;
-    const headerColor = b?.color || colors.brandPrimary;
-    const items = products.map((p: any) => `
-      <div class="card">
-        ${p.photos?.[0] ? `<img src="${toRemoteUrl(p.photos[0])}" />` : `<div class="noimg">Sin foto</div>`}
-        <div class="info">
-          <div class="pname">${escape(p.name)}</div>
-          ${p.category ? `<div class="pcat">${escape(p.category)}</div>` : ""}
-          ${p.description ? `<div class="pdesc">${escape(p.description)}</div>` : ""}
-          <div class="pprice">${formatMoney(p.sale_price || 0, currency)}</div>
-        </div>
-      </div>
-    `).join("");
+  const buildHtml = async () => buildCatalogHtml({
+    business: activeBusiness || {},
+    products,
+    formatPrice: (n) => formatMoney(n, currency),
+    resolveUrl: toRemoteUrl,
+    fontCss: await catalogFontCss(),
+  });
 
-    return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
-      * { box-sizing: border-box; font-family: -apple-system, Helvetica, Arial, sans-serif; }
-      body { margin: 0; padding: 24px; color: ${colors.onSurface}; }
-      .header { padding: 20px; background: ${headerColor}; color: white; border-radius: 8px; margin-bottom: 24px; }
-      .bname { font-size: 28px; font-weight: 700; margin: 0; }
-      .bsub { font-size: 14px; opacity: 0.9; margin-top: 4px; }
-      .bcontact { font-size: 12px; margin-top: 10px; opacity: 0.95; }
-      .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
-      .card { border: 1px solid ${colors.border}; border-radius: 8px; overflow: hidden; }
-      .card img { width: 100%; height: 200px; object-fit: cover; display: block; background: ${colors.surfaceSecondary}; }
-      .noimg { height: 200px; background: ${colors.surfaceSecondary}; display: flex; align-items: center; justify-content: center; color: ${colors.muted}; font-size: 12px; }
-      .info { padding: 10px 12px 12px; }
-      .pname { font-size: 15px; font-weight: 600; }
-      .pcat { font-size: 11px; color: ${colors.muted}; margin-top: 2px; }
-      .pdesc { font-size: 11px; color: ${colors.muted}; margin-top: 4px; }
-      .pprice { font-size: 15px; font-weight: 700; color: ${headerColor}; margin-top: 6px; }
-    </style></head><body>
-      <div class="header">
-        <div class="bname">${escape(b?.name || "")}</div>
-        ${b?.subtitle ? `<div class="bsub">${escape(b.subtitle)}</div>` : ""}
-        <div class="bcontact">
-          ${b?.phone ? `Tel: ${escape(b.phone)} · ` : ""}
-          ${b?.email ? `${escape(b.email)} · ` : ""}
-          ${b?.website || ""}
-        </div>
-      </div>
-      <div class="grid">${items || `<div style="padding:40px;text-align:center;color:${colors.muted}">Sin productos</div>`}</div>
-    </body></html>`;
-  };
+  // Letter size, matching the page size the catalog is laid out for; textZoom keeps the phone's
+  // font-size setting from enlarging the text and pushing cards off the page.
+  const printPdf = async () => (await Print.printToFileAsync({ html: await buildHtml(), ...PAGE })).uri;
 
   const generate = async () => {
     try {
       setGenerating(true);
-      const { uri } = await Print.printToFileAsync({ html: buildHtml() });
       if (Platform.OS === "web") {
-        setGenerating(false);
+        setPreviewHtml(await buildHtml());
         return;
       }
+      const uri = await printPdf();
       const can = await Sharing.isAvailableAsync();
       if (can) {
         await Sharing.shareAsync(uri, { mimeType: "application/pdf", dialogTitle: "Catálogo" });
@@ -95,9 +66,13 @@ export default function Catalog() {
 
   const shareWhatsapp = async () => {
     if (sharingWa || isLoading) return;
+    if (Platform.OS === "web") {
+      Alert.alert("Enviar PDF", "Esta opción funciona en el teléfono. En la web usa \"Generar PDF\" y guárdalo con \"Imprimir\".");
+      return;
+    }
     setSharingWa(true);
     try {
-      const { uri } = await Print.printToFileAsync({ html: buildHtml() });
+      const uri = await printPdf();
       const name = `catalogo-${(activeBusiness?.name || "negocio").replace(/\s+/g, "-").toLowerCase()}.pdf`;
       const { absoluteUrl } = await uploadAnyFile(uri, "application/pdf", name);
       const text = `Catálogo de ${activeBusiness?.name || "nuestro negocio"} 📒\n${absoluteUrl}`;
@@ -105,8 +80,6 @@ export default function Catalog() {
       const canOpen = await Linking.canOpenURL(waUrl);
       if (canOpen) {
         await Linking.openURL(waUrl);
-      } else if (Platform.OS === "web" && (navigator as any).share) {
-        await (navigator as any).share({ title: "Catálogo", text, url: absoluteUrl });
       } else {
         await Share.share({ message: text });
       }
@@ -169,7 +142,7 @@ export default function Catalog() {
             {isLoading ? "Cargando productos…" : `${products.length} ${products.length === 1 ? "producto" : "productos"} en tu catálogo`}
           </Text>
           <Text style={styles.heroSub}>
-            Comparte tu catálogo con tus clientes como página web o como archivo PDF. Incluye foto, categoría, descripción y precio de cada producto.
+            Comparte tu catálogo con tus clientes como página web o como archivo PDF. Incluye foto, referencia, material y precio de cada producto.
           </Text>
           {!isLoading && products.length === 0 && (
             <Pressable style={styles.emptyCta} onPress={() => router.push("/product-form")} testID="catalog-add-product">
@@ -218,17 +191,16 @@ export default function Catalog() {
             </>}
           </Pressable>
           <Text style={styles.hint}>
-            El PDF usa el color y los datos de contacto de tu negocio. Puedes cambiarlos en Perfil del negocio.
+            El PDF lleva el logo, el color y los datos de contacto de tu negocio, con 9 productos por página agrupados por categoría. Puedes cambiarlos en Perfil del negocio.
           </Text>
         </View>
       </ScrollView>
+      {Platform.OS === "web" && <CatalogPreview html={previewHtml} onClose={() => setPreviewHtml(null)} />}
     </View>
   );
 }
 
-function escape(s: string) {
-  return String(s || "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
-}
+const PAGE = { width: 612, height: 792, textZoom: 100 };
 
 // WhatsApp's own brand greens, so the share option is recognizable.
 const WHATSAPP = "#25D366";

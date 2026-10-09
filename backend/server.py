@@ -13,6 +13,7 @@ from typing import List, Optional
 import uuid
 from datetime import datetime, timezone, timedelta
 import httpx
+from urllib.parse import quote
 
 
 ROOT_DIR = Path(__file__).parent
@@ -984,6 +985,148 @@ def _resolve_photo(url: str, request_base: str) -> str:
     return url
 
 
+# Same look as the PDF catalog (frontend/src/catalog-html.ts): the business band with its logo and
+# categories, framed product cards on a light stone background, and the contacts at the foot.
+_CATALOG_GRAIN = (
+    "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='220' height='220'>"
+    "<filter id='g'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/>"
+    "<feColorMatrix values='0 0 0 0 0.3  0 0 0 0 0.28  0 0 0 0 0.25  0 0 0 0.10 0'/></filter>"
+    "<rect width='100%' height='100%' filter='url(%23g)'/></svg>\")"
+)
+
+_CATALOG_CSS = """
+:root { --brand: __BRAND__; --grain: __GRAIN__; --ink: #3B3936; --muted: #77716A; --stone: #ECEAE6; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  min-height: 100vh; color: var(--ink); font-family: "Montserrat", "Helvetica Neue", Roboto, Arial, sans-serif;
+  background: radial-gradient(ellipse at 15% 30%, rgba(255,255,255,.55), transparent 45%), var(--grain), var(--stone);
+}
+header { padding: 28px 20px 88px; text-align: center; color: #fff; background: var(--grain), var(--brand); }
+.logo {
+  width: 64px; height: 64px; margin: 0 auto; border-radius: 8px; background: #fff; overflow: hidden;
+  display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 8px rgba(0,0,0,.2);
+}
+.logo img { width: 100%; height: 100%; object-fit: contain; }
+.logo span { font-size: 30px; font-weight: 700; color: var(--brand); }
+h1 { margin-top: 14px; font-size: clamp(24px, 6.5vw, 40px); line-height: 1.15; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
+.tagline { margin-top: 6px; font-size: clamp(14px, 3.6vw, 17px); font-weight: 600; opacity: .92; }
+/* One line, centered while it fits and scrolling sideways on narrow phones. */
+.cats {
+  display: flex; align-items: center; width: max-content; max-width: 100%; margin: 18px auto 0;
+  overflow-x: auto; white-space: nowrap; scrollbar-width: none;
+}
+.cats::-webkit-scrollbar { display: none; }
+.cat {
+  padding: 6px 2px 4px; border: 0; border-bottom: 1px solid transparent; background: none; color: #fff; cursor: pointer;
+  font: inherit; font-size: 11px; letter-spacing: .3em; text-transform: uppercase; opacity: .8;
+}
+button.cat:hover { opacity: 1; }
+.cat.on { opacity: 1; font-weight: 700; border-bottom-color: #fff; }
+.sep { margin: 0 12px; font-size: 11px; opacity: .45; }
+main { max-width: 1040px; margin: -62px auto 0; padding: 0 16px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 16px; }
+@media (min-width: 640px) {
+  main { padding: 0 28px; }
+  .grid { grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 26px; }
+}
+.card {
+  display: flex; flex-direction: column; padding: 8px 8px 0; background: #fff; cursor: pointer;
+  box-shadow: 0 4px 12px rgba(45,38,30,.13), 0 1px 2px rgba(45,38,30,.10); transition: transform .15s ease, box-shadow .15s ease;
+}
+.card:hover { transform: translateY(-2px); box-shadow: 0 10px 24px rgba(45,38,30,.16); }
+.card.hidden { display: none; }
+.photo { aspect-ratio: 4 / 3; background: #F1EEEA; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.photo span { font-size: 40px; font-weight: 700; color: #D5CFC7; }
+h2 {
+  margin-top: 9px; min-height: 2.6em; font-size: 13.5px; line-height: 1.3; font-weight: 700;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.meta { flex: 1; display: flex; flex-direction: column; margin: 9px -8px 0; padding: 8px 8px 10px; background: #F4F2EF; border-top: 1px solid #E8E4DF; }
+.ref, .detail { font-size: 10.5px; line-height: 1.45; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ref { text-transform: uppercase; letter-spacing: .05em; }
+.price { margin: 4px 0 10px; font-size: 15px; font-weight: 700; }
+.price u { text-decoration-thickness: 1px; text-underline-offset: 3px; }
+.out { margin-left: 8px; font-size: 9px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: #A0473C; }
+.order {
+  margin-top: auto; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 9px 6px;
+  background: var(--grain), var(--brand); color: #fff; text-decoration: none;
+  font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
+}
+.empty { grid-column: 1 / -1; padding: 60px 20px; text-align: center; color: var(--muted); background: #fff; }
+footer { max-width: 1040px; margin: 0 auto; padding: 40px 20px 32px; text-align: center; }
+.contacts { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px 18px; font-size: 12px; color: var(--muted); }
+.contacts a { color: inherit; text-decoration: none; }
+.contacts a:hover { text-decoration: underline; }
+.pill {
+  display: inline-block; max-width: 100%; margin-top: 16px; padding: 9px 26px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  background: var(--grain), var(--brand); color: #fff; text-decoration: none; font-size: 12px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase;
+}
+.credit { margin-top: 18px; font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: #A8A29A; }
+.modal { position: fixed; inset: 0; z-index: 10; display: none; align-items: center; justify-content: center; padding: 16px; background: rgba(20,18,16,.72); }
+.modal.open { display: flex; }
+.sheet { position: relative; width: 100%; max-width: 520px; max-height: 92vh; overflow: auto; background: #fff; border-radius: 8px; }
+.sheet img { width: 100%; max-height: 58vh; object-fit: contain; display: block; background: #F1EEEA; }
+.sbody { padding: 18px 20px 22px; }
+.sbody h3 { font-size: 19px; line-height: 1.3; font-weight: 700; }
+.sbody .ref { margin-top: 6px; white-space: normal; }
+.sbody .detail { white-space: normal; }
+.sdesc { margin-top: 12px; font-size: 14px; line-height: 1.55; color: #55504A; white-space: pre-wrap; }
+.sbody .price { margin: 12px 0 0; font-size: 20px; }
+.sbody .order { margin-top: 16px; padding: 12px; font-size: 12px; }
+.close {
+  position: absolute; top: 10px; right: 10px; width: 36px; height: 36px; border: 0; border-radius: 6px;
+  background: rgba(255,255,255,.92); color: var(--ink); font-size: 20px; cursor: pointer;
+}
+"""
+
+_CATALOG_JS = """
+const cards = [...document.querySelectorAll(".card")];
+const emptyFilter = document.getElementById("emptyFilter");
+document.querySelectorAll("button.cat").forEach((btn) => btn.addEventListener("click", () => {
+  document.querySelectorAll("button.cat").forEach((b) => b.classList.toggle("on", b === btn));
+  let shown = 0;
+  cards.forEach((c) => {
+    const match = btn.dataset.cat === "*" || c.dataset.cat === btn.dataset.cat;
+    c.classList.toggle("hidden", !match);
+    if (match) shown++;
+  });
+  emptyFilter.style.display = shown ? "none" : "block";
+}));
+const modal = document.getElementById("modal");
+const $ = (id) => document.getElementById(id);
+cards.forEach((c) => c.addEventListener("click", (e) => {
+  if (e.target.closest(".order")) return;
+  const d = c.dataset;
+  $("mimg").style.display = d.photo ? "block" : "none";
+  if (d.photo) $("mimg").src = d.photo;
+  $("mname").textContent = d.name;
+  $("mref").textContent = d.ref;
+  $("mdetail").textContent = d.detail;
+  $("mdesc").textContent = d.desc;
+  $("mprice").textContent = d.price;
+  $("mout").style.display = d.out ? "inline" : "none";
+  $("morder").href = c.querySelector(".order").href;
+  modal.classList.add("open");
+}));
+const closeModal = () => modal.classList.remove("open");
+modal.addEventListener("click", (e) => { if (e.target === modal) closeModal(); });
+$("mclose").addEventListener("click", closeModal);
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeModal(); });
+"""
+
+_WA_ICON = (
+    '<svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M20.52 3.48A11.9 11.9 0 0012.04 0C5.5 0 .2 5.3.2 11.84a11.74 11.74 0 001.65 6l-1.75 6.38 6.54-1.71a11.86 11.86 0 005.4 1.37h.01c6.54 0 11.84-5.3 11.84-11.84 0-3.16-1.23-6.14-3.37-8.56zM12.05 21.6a9.76 9.76 0 01-4.96-1.36l-.36-.21-3.88 1.02 1.04-3.78-.23-.39A9.73 9.73 0 012.37 11.84c0-5.37 4.38-9.74 9.68-9.74 2.59 0 5.03 1.01 6.86 2.85a9.65 9.65 0 012.86 6.9c0 5.36-4.38 9.75-9.72 9.75z"/>'
+    '<path d="M17.4 14.4c-.3-.15-1.73-.86-2-.96-.27-.1-.47-.15-.67.15-.2.3-.76.96-.93 1.16-.17.2-.34.22-.63.07-.3-.15-1.26-.46-2.4-1.47-.9-.8-1.5-1.78-1.67-2.08-.17-.3-.02-.45.13-.6.14-.14.3-.35.44-.52.15-.17.2-.3.3-.5.1-.2.05-.37-.02-.52-.08-.15-.67-1.6-.92-2.2-.24-.58-.49-.5-.67-.5l-.57-.01c-.2 0-.52.07-.8.37-.27.3-1.04 1.02-1.04 2.5s1.06 2.9 1.21 3.1c.15.2 2.1 3.2 5.08 4.5.71.3 1.26.48 1.69.62.71.22 1.35.19 1.86.12.57-.08 1.73-.7 1.97-1.38.25-.68.25-1.26.17-1.38-.07-.12-.27-.2-.57-.35z"/></svg>'
+)
+
+
+def _social_handle(value) -> str:
+    """'@luna', 'luna' or 'https://instagram.com/luna/' -> 'luna'."""
+    v = re.sub(r"^https?://(www\.)?[^/]+/", "", (value or "").strip(), flags=re.I)
+    return re.sub(r"[/?#].*$", "", v).lstrip("@")
+
+
 @api_router.get("/public/catalog/{bid}")
 async def public_catalog(bid: str, request: Request):
     biz = await db.businesses.find_one({"id": bid}, {"_id": 0})
@@ -991,195 +1134,144 @@ async def public_catalog(bid: str, request: Request):
         raise HTTPException(404, "Catálogo no encontrado")
     products = await db.products.find({"business_id": bid}, {"_id": 0}).sort("created_at", -1).to_list(500)
 
+    e = _html_escape
     base = str(request.base_url).rstrip("/")
-    header_color = biz.get("color") or DEFAULT_CATALOG_COLOR
-    name = _html_escape(biz.get("name"))
-    subtitle = _html_escape(biz.get("subtitle"))
+    color = biz.get("color") or ""
+    brand = color if re.fullmatch(r"#[0-9a-fA-F]{6}", color) else DEFAULT_CATALOG_COLOR
+    name = (biz.get("name") or "").strip() or "Catálogo"
+    subtitle = (biz.get("subtitle") or "").strip()
     phone = (biz.get("phone") or "").strip()
-    phone_digits = "".join(c for c in phone if c.isdigit() or c == "+").lstrip("+")
+    phone_digits = "".join(c for c in phone if c.isdigit())
+    email = (biz.get("email") or "").strip()
+    address = (biz.get("address") or "").strip()
+    website = re.sub(r"^https?://", "", (biz.get("website") or "").strip(), flags=re.I).rstrip("/")
+    ig, fb, tt = (_social_handle(biz.get(k)) for k in ("instagram", "facebook", "tiktok"))
     currency_sym = "$" if (biz.get("currency") or "").upper() == "USD" else "L "
     logo = _resolve_photo(biz.get("logo") or "", base)
 
-    def product_card(p):
-        photo = _resolve_photo((p.get("photos") or [""])[0], base) if p.get("photos") else ""
-        pname = _html_escape(p.get("name"))
-        pcat = _html_escape(p.get("category"))
-        pcat_slug = (p.get("category") or "").strip().lower() or "sin-categoria"
-        pdesc = _html_escape(p.get("description"))
-        pprice = f"{currency_sym}{float(p.get('sale_price') or 0):,.2f}"
-        in_stock = (p.get("stock") or 0) > 0
-        wa_text = _html_escape(f"Hola, quiero pedir: {p.get('name')} ({pprice}).")
-        wa_href = f"https://wa.me/{phone_digits}?text={wa_text}" if phone_digits else f"https://wa.me/?text={wa_text}"
+    # Same order as the PDF: categories alphabetically, uncategorized last, newest first inside each.
+    def cat_of(p) -> str:
+        return (p.get("category") or "").strip()
+
+    categories = sorted({cat_of(p) for p in products} - {""}, key=str.casefold)
+    rank = {c: i for i, c in enumerate(categories)}
+    products.sort(key=lambda p: rank.get(cat_of(p), len(categories)))
+
+    def wa_link(text: str) -> str:
+        return f"https://wa.me/{phone_digits}?text={quote(text)}" if phone_digits else f"https://wa.me/?text={quote(text)}"
+
+    def card(p) -> str:
+        photo = _resolve_photo((p.get("photos") or [""])[0], base)
+        pname = (p.get("name") or "").strip()
+        cat = cat_of(p)
+        sku = (p.get("sku") or "").strip()
+        ref = f"Referencia: {sku}" if sku else cat
+        detail = (p.get("material") or "").strip() or (cat if sku else "")
+        price = f"{currency_sym}{float(p.get('sale_price') or 0):,.2f}"
+        sold_out = (p.get("stock") or 0) <= 0
+        # Pieces with quotes are built first: Python 3.11 (Render) can't nest them inside the f-string.
+        img = f'<img src="{e(photo)}" alt="{e(pname)}" loading="lazy">' if photo else f"<span>{e(pname[:1].upper())}</span>"
+        out_attr = ' data-out="1"' if sold_out else ""
+        out_tag = '<span class="out">Agotado</span>' if sold_out else ""
+        order = e(wa_link(f"Hola, quiero pedir: {pname} ({price})."))
+        desc = e(p.get("description"))
         return f"""
-        <article class="card" data-category="{_html_escape(pcat_slug)}" data-full="{photo}" data-name="{pname}" data-desc="{pdesc}" data-price="{pprice}">
-          <div class="imgwrap">
-            {f'<img src="{photo}" alt="{pname}"/>' if photo else '<div class="noimg">Sin foto</div>'}
-            {'' if in_stock else '<span class="badge">Agotado</span>'}
-          </div>
-          <div class="info">
-            {f'<div class="cat">{pcat}</div>' if pcat else ''}
-            <div class="name">{pname}</div>
-            <div class="price">{pprice}</div>
-            <a class="wa" href="{wa_href}" target="_blank" rel="noopener">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M20.52 3.48A11.9 11.9 0 0012.04 0C5.5 0 .2 5.3.2 11.84a11.74 11.74 0 001.65 6l-1.75 6.38 6.54-1.71a11.86 11.86 0 005.4 1.37h.01c6.54 0 11.84-5.3 11.84-11.84 0-3.16-1.23-6.14-3.37-8.56zM12.05 21.6a9.76 9.76 0 01-4.96-1.36l-.36-.21-3.88 1.02 1.04-3.78-.23-.39A9.73 9.73 0 012.37 11.84c0-5.37 4.38-9.74 9.68-9.74 2.59 0 5.03 1.01 6.86 2.85a9.65 9.65 0 012.86 6.9c0 5.36-4.38 9.75-9.72 9.75z"/><path d="M17.4 14.4c-.3-.15-1.73-.86-2-.96-.27-.1-.47-.15-.67.15-.2.3-.76.96-.93 1.16-.17.2-.34.22-.63.07-.3-.15-1.26-.46-2.4-1.47-.9-.8-1.5-1.78-1.67-2.08-.17-.3-.02-.45.13-.6.14-.14.3-.35.44-.52.15-.17.2-.3.3-.5.1-.2.05-.37-.02-.52-.08-.15-.67-1.6-.92-2.2-.24-.58-.49-.5-.67-.5l-.57-.01c-.2 0-.52.07-.8.37-.27.3-1.04 1.02-1.04 2.5s1.06 2.9 1.21 3.1c.15.2 2.1 3.2 5.08 4.5.71.3 1.26.48 1.69.62.71.22 1.35.19 1.86.12.57-.08 1.73-.7 1.97-1.38.25-.68.25-1.26.17-1.38-.07-.12-.27-.2-.57-.35z"/></svg>
-              Pedir por WhatsApp
-            </a>
-          </div>
-        </article>
-        """
+<article class="card" data-cat="{e(cat.casefold())}" data-photo="{e(photo)}" data-name="{e(pname)}" data-ref="{e(ref)}"
+  data-detail="{e(detail)}" data-desc="{desc}" data-price="{e(price)}"{out_attr}>
+  <div class="photo">{img}</div>
+  <h2>{e(pname)}</h2>
+  <div class="meta">
+    <p class="ref">{e(ref)}</p>
+    <p class="detail">{e(detail)}</p>
+    <p class="price"><u>{e(price)}</u>{out_tag}</p>
+    <a class="order" href="{order}" target="_blank" rel="noopener">{_WA_ICON}Pedir</a>
+  </div>
+</article>"""
 
-    cards_html = "".join(product_card(p) for p in products) or '<p id="empty" style="padding:40px;text-align:center;color:#8E8E93">Catálogo vacío</p>'
+    if len(categories) > 1:
+        buttons = ['<button class="cat on" data-cat="*">Todos</button>'] + [
+            f'<button class="cat" data-cat="{e(c.casefold())}">{e(c)}</button>' for c in categories
+        ]
+        cats_html = f'<nav class="cats">{"<span class=sep>|</span>".join(buttons)}</nav>'
+    elif categories:
+        cats_html = f'<p class="cats"><span class="cat">{e(categories[0])}</span></p>'
+    else:
+        cats_html = ""
 
-    # Build category chips preserving order of appearance
-    seen = []
-    for p in products:
-        c = (p.get("category") or "").strip()
-        if c and c not in seen:
-            seen.append(c)
-    def _slug(s): return s.strip().lower()
-    chips_html = '<button class="chip chip-active" data-cat="todos">Todos</button>' + "".join(
-        f'<button class="chip" data-cat="{_html_escape(_slug(c))}">{_html_escape(c)}</button>' for c in seen
-    )
+    # The most useful link goes in the button at the foot; the other contact details above it.
+    if website:
+        pill = f'<a class="pill" href="https://{e(website)}" target="_blank" rel="noopener">{e(website)}</a>'
+    elif ig:
+        pill = f'<a class="pill" href="https://instagram.com/{e(ig)}" target="_blank" rel="noopener">@{e(ig)}</a>'
+    elif phone_digits:
+        pill = f'<a class="pill" href="https://wa.me/{phone_digits}" target="_blank" rel="noopener">Pedidos: {e(phone)}</a>'
+    else:
+        pill = ""
+    contacts = []
+    if phone and (website or ig or not phone_digits):
+        contacts.append(f'<a href="https://wa.me/{phone_digits}" target="_blank" rel="noopener">Tel. / WhatsApp {e(phone)}</a>' if phone_digits else e(phone))
+    if email:
+        contacts.append(f'<a href="mailto:{e(email)}">{e(email)}</a>')
+    if ig and website:
+        contacts.append(f'<a href="https://instagram.com/{e(ig)}" target="_blank" rel="noopener">Instagram @{e(ig)}</a>')
+    if fb:
+        contacts.append(f'<a href="https://facebook.com/{e(fb)}" target="_blank" rel="noopener">Facebook {e(fb)}</a>')
+    if tt:
+        contacts.append(f'<a href="https://www.tiktok.com/@{e(tt)}" target="_blank" rel="noopener">TikTok @{e(tt)}</a>')
+    if address:
+        contacts.append(f"<span>{e(address)}</span>")
+
+    first_photo = next((_resolve_photo(p["photos"][0], base) for p in products if p.get("photos")), "")
+    preview_image = logo or first_photo
+    cards_html = "".join(card(p) for p in products) or '<p class="empty">Aún no hay productos en el catálogo.</p>'
+    css = _CATALOG_CSS.replace("__BRAND__", brand).replace("__GRAIN__", _CATALOG_GRAIN)
+    tagline = e(subtitle or "Catálogo de productos")
+    og_image = f'<meta property="og:image" content="{e(preview_image)}">' if preview_image else ""
+    logo_html = f'<img src="{e(logo)}" alt="">' if logo else f"<span>{e(name[:1].upper())}</span>"
+    contacts_html = f'<div class="contacts">{"".join(contacts)}</div>' if contacts else ""
 
     html = f"""<!DOCTYPE html><html lang="es"><head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>{name} · Catálogo</title>
-<meta property="og:title" content="{name} · Catálogo" />
-<meta property="og:description" content="{subtitle or 'Catálogo online'}" />
-<style>
-  :root {{ --brand: {header_color}; --surface: #FFFFFF; --muted: #8E8E93; --text:#1C1C1E; --border:#E5E5EA; }}
-  * {{ box-sizing: border-box; }}
-  body {{ margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; background: #F8F8FA; color: var(--text); }}
-  header {{ background: var(--brand); color: #fff; padding: 32px 20px; }}
-  .wrap {{ max-width: 980px; margin: 0 auto; }}
-  .brand {{ display: flex; align-items: center; gap: 14px; }}
-  .brand img {{ width: 56px; height: 56px; border-radius: 12px; object-fit: cover; background: rgba(255,255,255,0.2); }}
-  .brand .avatar {{ width: 56px; height: 56px; border-radius: 12px; background: rgba(255,255,255,0.2); display:flex; align-items:center; justify-content:center; font-weight:700; font-size:22px; }}
-  h1 {{ margin: 0; font-size: 24px; font-weight: 700; }}
-  .sub {{ font-size: 14px; opacity: 0.9; margin-top: 2px; }}
-  .contacts {{ margin-top: 14px; font-size: 13px; opacity: 0.95; display: flex; flex-wrap: wrap; gap: 10px 16px; }}
-  main {{ padding: 20px; }}
-  .chips {{
-    display: flex; gap: 8px; overflow-x: auto; padding: 4px 0 14px;
-    scrollbar-width: none; -webkit-overflow-scrolling: touch;
-    position: sticky; top: 0; background: #F8F8FA; z-index: 10; padding-top: 10px;
-  }}
-  .chips::-webkit-scrollbar {{ display: none; }}
-  .chip {{
-    flex-shrink: 0; height: 36px; padding: 0 14px; border-radius: 999px;
-    background: #fff; border: 1px solid var(--border); color: var(--text);
-    font-size: 13px; font-weight: 500; cursor: pointer; white-space: nowrap;
-    transition: background .15s ease, color .15s ease, border-color .15s ease;
-  }}
-  .chip:hover {{ border-color: var(--brand); }}
-  .chip-active {{ background: var(--brand); color: #fff; border-color: var(--brand); }}
-  .grid {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; }}
-  .card.hidden {{ display: none; }}
-  .empty-filter {{ grid-column: 1 / -1; padding: 40px; text-align: center; color: var(--muted); font-size: 14px; }}
-  .card {{ background: #fff; border: 1px solid var(--border); border-radius: 14px; overflow: hidden; cursor: pointer; transition: transform .15s ease, box-shadow .15s ease; }}
-  .card:hover {{ transform: translateY(-2px); box-shadow: 0 8px 20px rgba(0,0,0,0.06); }}
-  .imgwrap {{ position: relative; aspect-ratio: 1 / 1; background: #F2F2F7; }}
-  .imgwrap img {{ width: 100%; height: 100%; object-fit: cover; display: block; }}
-  .noimg {{ display:flex; align-items:center; justify-content:center; width:100%; height:100%; color: var(--muted); font-size: 13px; }}
-  .badge {{ position:absolute; top:8px; right:8px; background:#1C1C1E; color:#fff; padding:3px 8px; border-radius:999px; font-size:11px; }}
-  .info {{ padding: 10px 12px 12px; }}
-  .cat {{ font-size: 11px; color: var(--muted); margin-bottom: 2px; text-transform: uppercase; letter-spacing: .5px; }}
-  .name {{ font-size: 15px; font-weight: 600; }}
-  .price {{ font-size: 16px; font-weight: 700; color: var(--brand); margin: 4px 0 10px; }}
-  .wa {{ display:inline-flex; align-items:center; gap:6px; background:#25D366; color:#fff; padding:8px 12px; border-radius:999px; font-size:13px; font-weight:600; text-decoration:none; }}
-  .wa:hover {{ background:#20bd5a; }}
-  footer {{ padding: 20px; text-align:center; color: var(--muted); font-size: 12px; }}
-  /* Modal */
-  .modal {{ position: fixed; inset: 0; background: rgba(0,0,0,0.75); display:none; align-items:center; justify-content:center; padding: 20px; z-index: 100; }}
-  .modal.open {{ display: flex; }}
-  .mcard {{ max-width: 560px; width: 100%; background:#fff; border-radius:16px; overflow:hidden; max-height: 90vh; display:flex; flex-direction:column; }}
-  .mcard img {{ width: 100%; max-height: 60vh; object-fit: contain; background: #000; display:block; }}
-  .mbody {{ padding: 16px 20px 20px; overflow:auto; }}
-  .mclose {{ position:absolute; top:16px; right:20px; background:rgba(255,255,255,0.9); border:none; width:36px; height:36px; border-radius:50%; font-size:18px; cursor:pointer; }}
-  .mname {{ font-size: 20px; font-weight: 700; }}
-  .mprice {{ font-size: 20px; font-weight: 700; color: var(--brand); margin: 6px 0 10px; }}
-  .mdesc {{ color: #4A4A4A; font-size: 14px; line-height: 1.5; margin-bottom: 14px; white-space: pre-wrap; }}
-  .mwa {{ display:inline-flex; align-items:center; gap:8px; background:#25D366; color:#fff; padding:10px 16px; border-radius:999px; font-size:14px; font-weight:600; text-decoration:none; }}
-</style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{e(name)} · Catálogo</title>
+<meta property="og:title" content="{e(name)} · Catálogo">
+<meta property="og:description" content="{tagline}">
+{og_image}
+<meta name="theme-color" content="{brand}">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700&display=swap" rel="stylesheet">
+<style>{css}</style>
 </head><body>
-<header><div class="wrap">
-  <div class="brand">
-    {f'<img src="{logo}" alt="logo"/>' if logo else f'<div class="avatar">{name[:1]}</div>'}
-    <div>
-      <h1>{name}</h1>
-      {f'<div class="sub">{subtitle}</div>' if subtitle else ''}
-    </div>
-  </div>
-  <div class="contacts">
-    {f'<span>📞 {_html_escape(phone)}</span>' if phone else ''}
-    {f'<span>📧 {_html_escape(biz.get("email"))}</span>' if biz.get("email") else ''}
-    {f'<span>📍 {_html_escape(biz.get("address"))}</span>' if biz.get("address") else ''}
-    {f'<a style="color:#fff" href="https://{_html_escape(biz.get("website"))}" target="_blank">🌐 {_html_escape(biz.get("website"))}</a>' if biz.get("website") else ''}
-  </div>
-</div></header>
-<main><div class="wrap">
-  {f'<div class="chips" id="chips">{chips_html}</div>' if seen else ''}
-  <div class="grid" id="grid">{cards_html}</div>
-  <div class="empty-filter" id="emptyFilter" style="display:none">Sin productos en esta categoría</div>
-</div></main>
-<footer>Catálogo generado por Mis Negocios</footer>
-<div class="modal" id="modal" onclick="if(event.target===this)close_()">
-  <div class="mcard">
-    <img id="mimg" src="" alt=""/>
-    <div class="mbody">
-      <button class="mclose" onclick="close_()" aria-label="Cerrar">×</button>
-      <div class="mname" id="mname"></div>
-      <div class="mprice" id="mprice"></div>
-      <div class="mdesc" id="mdesc"></div>
-      <a id="mwa" class="mwa" target="_blank" rel="noopener">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M20.52 3.48A11.9 11.9 0 0012.04 0C5.5 0 .2 5.3.2 11.84a11.74 11.74 0 001.65 6l-1.75 6.38 6.54-1.71a11.86 11.86 0 005.4 1.37h.01c6.54 0 11.84-5.3 11.84-11.84 0-3.16-1.23-6.14-3.37-8.56z"/></svg>
-        Pedir por WhatsApp
-      </a>
+<header>
+  <div class="logo">{logo_html}</div>
+  <h1>{e(name)}</h1>
+  <p class="tagline">{tagline}</p>
+  {cats_html}
+</header>
+<main>
+  <div class="grid">{cards_html}<p class="empty" id="emptyFilter" style="display:none">No hay productos en esta categoría.</p></div>
+</main>
+<footer>
+  {contacts_html}
+  {pill}
+  <p class="credit">Catálogo creado con Mis Negocios</p>
+</footer>
+<div class="modal" id="modal" role="dialog" aria-modal="true">
+  <div class="sheet">
+    <button class="close" id="mclose" aria-label="Cerrar">×</button>
+    <img id="mimg" src="" alt="">
+    <div class="sbody">
+      <h3 id="mname"></h3>
+      <p class="ref" id="mref"></p>
+      <p class="detail" id="mdetail"></p>
+      <p class="sdesc" id="mdesc"></p>
+      <p class="price"><u id="mprice"></u><span class="out" id="mout">Agotado</span></p>
+      <a class="order" id="morder" target="_blank" rel="noopener">{_WA_ICON}Pedir por WhatsApp</a>
     </div>
   </div>
 </div>
-<script>
-  const PHONE = {('"' + phone_digits + '"') if phone_digits else '""'};
-  // Category filter
-  const chips = document.querySelectorAll('#chips .chip');
-  const cards = document.querySelectorAll('.card');
-  const emptyFilter = document.getElementById('emptyFilter');
-  chips.forEach(chip => {{
-    chip.addEventListener('click', () => {{
-      chips.forEach(c => c.classList.remove('chip-active'));
-      chip.classList.add('chip-active');
-      const cat = chip.dataset.cat;
-      let visible = 0;
-      cards.forEach(card => {{
-        const match = cat === 'todos' || card.dataset.category === cat;
-        card.classList.toggle('hidden', !match);
-        if (match) visible++;
-      }});
-      if (emptyFilter) emptyFilter.style.display = visible === 0 ? 'block' : 'none';
-    }});
-  }});
-  // Modal
-  document.querySelectorAll('.card').forEach(c => {{
-    c.addEventListener('click', e => {{
-      if (e.target.closest('.wa')) return;
-      const name = c.dataset.name || '';
-      const desc = c.dataset.desc || '';
-      const price = c.dataset.price || '';
-      const img = c.dataset.full || '';
-      document.getElementById('mname').textContent = name;
-      document.getElementById('mprice').textContent = price;
-      document.getElementById('mdesc').textContent = desc;
-      const mimg = document.getElementById('mimg');
-      if (img) {{ mimg.src = img; mimg.style.display='block'; }} else {{ mimg.style.display='none'; }}
-      const text = encodeURIComponent('Hola, quiero pedir: ' + name + ' (' + price + ').');
-      document.getElementById('mwa').href = 'https://wa.me/' + PHONE + '?text=' + text;
-      document.getElementById('modal').classList.add('open');
-    }});
-  }});
-  function close_() {{ document.getElementById('modal').classList.remove('open'); }}
-  document.addEventListener('keydown', e => {{ if (e.key === 'Escape') close_(); }});
-</script>
+<script>{_CATALOG_JS}</script>
 </body></html>"""
     return Response(content=html, media_type="text/html; charset=utf-8")
 

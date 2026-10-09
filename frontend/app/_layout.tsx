@@ -12,6 +12,7 @@ import { queryClient } from "@/src/query-client";
 import { BusinessProvider } from "@/src/business-context";
 import { AuthProvider, useAuth } from "@/src/auth-context";
 import { colors } from "@/src/theme";
+import { WebAlertHost } from "@/src/web-alert";
 
 LogBox.ignoreAllLogs(true);
 
@@ -54,6 +55,7 @@ export default function RootLayout() {
                       <AuthGate>
                         <Stack screenOptions={{ headerShown: false }} />
                       </AuthGate>
+                      <WebAlertHost />
                     </View>
                   </BusinessProvider>
                 </AuthProvider>

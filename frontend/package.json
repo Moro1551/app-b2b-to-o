@@ -12,6 +12,7 @@
     "lint": "expo lint"
   },
   "dependencies": {
+    "@expo-google-fonts/montserrat": "0.4.2",
     "@expo/metro-runtime": "57.0.16",
     "@gorhom/bottom-sheet": "5.2.14",
     "@react-native-async-storage/async-storage": "2.2.0",
@@ -20,6 +21,7 @@
     "date-fns": "4.1.0",
     "dayjs": "1.11.13",
     "expo": "57.0.27",
+    "expo-asset": "~57.0.19",
     "expo-blur": "57.0.3",
     "expo-constants": "57.0.21",
     "expo-file-system": "~57.0.7",
