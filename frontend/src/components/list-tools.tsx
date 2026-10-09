@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { ComponentProps, ReactNode } from "react";
 import { View, Text, Pressable, TextInput, ScrollView, StyleSheet } from "react-native";
 import type { StyleProp, ViewStyle } from "react-native";
 import Ionicons from "@react-native-vector-icons/ionicons";
@@ -48,6 +48,18 @@ export function FilterChip({ id, label, active, onPress }: { id: string; label: 
   );
 }
 
+/** Chip-shaped button among the filters that opens something instead of filtering. */
+export function ChipAction({ icon, label, onPress, testID }: {
+  icon: ComponentProps<typeof Ionicons>["name"]; label: string; onPress: () => void; testID?: string;
+}) {
+  return (
+    <Pressable onPress={onPress} style={[styles.chip, styles.chipAction]} testID={testID}>
+      <Ionicons name={icon} size={15} color={colors.onBrandSecondary} />
+      <Text style={[styles.chipTxt, { color: colors.onBrandSecondary }]}>{label}</Text>
+    </Pressable>
+  );
+}
+
 const styles = StyleSheet.create({
   searchBar: {
     flexDirection: "row", alignItems: "center", gap: spacing.sm,
@@ -61,6 +73,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border,
   },
   chipActive: { backgroundColor: colors.brandPrimary, borderColor: colors.brandPrimary },
+  chipAction: { flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: colors.brandSecondary, borderColor: colors.brandSecondary },
   chipTxt: { color: colors.muted, fontSize: 13, fontWeight: "600" },
   chipTxtActive: { color: colors.onBrandPrimary },
 });

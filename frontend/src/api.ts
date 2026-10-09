@@ -10,6 +10,9 @@ export const API_BASE = `${envUrl?.replace(/\/$/, "")}/api`;
 
 export const ACTIVE_BIZ_KEY = "@mn:active_business_id";
 
+/** A product category of the business; `count` is how many products use it. */
+export type Category = { id: string; name: string; count: number };
+
 /** Error carrying the backend's "detail" message (FastAPI) instead of the raw JSON body. */
 export async function responseError(res: Response): Promise<Error> {
   const txt = await res.text();
@@ -46,6 +49,14 @@ export const api = {
   createProduct: (bid: string, data: any) => request<any>(`/businesses/${bid}/products`, { method: "POST", body: JSON.stringify(data) }),
   updateProduct: (bid: string, pid: string, data: any) => request<any>(`/businesses/${bid}/products/${pid}`, { method: "PUT", body: JSON.stringify(data) }),
   deleteProduct: (bid: string, pid: string) => request<any>(`/businesses/${bid}/products/${pid}`, { method: "DELETE" }),
+
+  listCategories: (bid: string) => request<Category[]>(`/businesses/${bid}/categories`),
+  createCategory: (bid: string, name: string) =>
+    request<Category>(`/businesses/${bid}/categories`, { method: "POST", body: JSON.stringify({ name }) }),
+  renameCategory: (bid: string, cid: string, name: string) =>
+    request<Category>(`/businesses/${bid}/categories/${cid}`, { method: "PUT", body: JSON.stringify({ name }) }),
+  deleteCategory: (bid: string, cid: string) =>
+    request<{ ok: boolean; uncategorized: number }>(`/businesses/${bid}/categories/${cid}`, { method: "DELETE" }),
 
   createStockEntry: (bid: string, data: any) => request<any>(`/businesses/${bid}/stock-entries`, { method: "POST", body: JSON.stringify(data) }),
 

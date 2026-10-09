@@ -3,10 +3,12 @@ import { colors, radius, spacing } from "@/src/theme";
 import Ionicons from "@react-native-vector-icons/ionicons";
 
 export function EmptyState({
-  title, message, icon = "sparkles-outline", action, actionLabel,
+  title, message, icon = "sparkles-outline", action, actionLabel, secondaryAction, secondaryLabel,
 }: {
   title: string; message: string; icon?: any;
   action?: () => void; actionLabel?: string;
+  /** Optional text link under the main button. */
+  secondaryAction?: () => void; secondaryLabel?: string;
 }) {
   return (
     <View style={styles.wrap}>
@@ -18,6 +20,11 @@ export function EmptyState({
       {action && (
         <Pressable style={styles.btn} onPress={action} testID="empty-cta">
           <Text style={styles.btnTxt}>{actionLabel ?? "Añadir"}</Text>
+        </Pressable>
+      )}
+      {secondaryAction && !!secondaryLabel && (
+        <Pressable onPress={secondaryAction} hitSlop={8} style={styles.link} testID="empty-secondary">
+          <Text style={styles.linkTxt}>{secondaryLabel}</Text>
         </Pressable>
       )}
     </View>
@@ -39,4 +46,6 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
   },
   btnTxt: { color: colors.onBrandPrimary, fontWeight: "600" },
+  link: { marginTop: spacing.md, paddingVertical: spacing.xs },
+  linkTxt: { color: colors.onBrandSecondary, fontWeight: "700", fontSize: 14 },
 });
