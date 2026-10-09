@@ -12,26 +12,30 @@ import { SubHeader } from "@/src/components/top-header";
 import { SectionHead, CardRow, AmountInput, Segmented, formStyles, useLoadedForm } from "@/src/components/form-screen";
 import { EmptyState } from "@/src/components/empty-state";
 import { dayLabel, timeLabel } from "@/src/utils/dates";
+import { PAYMENT_METHOD_LABELS } from "@/src/receipt-html";
+import { useReceiptSender } from "@/src/components/receipt-sender";
+import { openWhatsapp, paymentReminder } from "@/src/whatsapp";
 import { colors, radius, spacing } from "@/src/theme";
 
 type Method = "efectivo" | "transferencia" | "otro";
 
 // Every method the server records, including the ones set automatically ("venta", "paypal").
-const METHOD_INFO: Record<string, { label: string; icon: any }> = {
-  venta: { label: "Al registrar la venta", icon: "receipt-outline" },
-  efectivo: { label: "Efectivo", icon: "cash-outline" },
-  transferencia: { label: "Transferencia", icon: "swap-horizontal-outline" },
-  otro: { label: "Otro", icon: "ellipsis-horizontal" },
-  paypal: { label: "PayPal", icon: "card-outline" },
+const METHOD_ICONS: Record<string, any> = {
+  venta: "receipt-outline", efectivo: "cash-outline", transferencia: "swap-horizontal-outline", otro: "ellipsis-horizontal", paypal: "card-outline",
 };
+const METHOD_INFO: Record<string, { label: string; icon: any }> = Object.fromEntries(
+  Object.entries(METHOD_ICONS).map(([key, icon]) => [key, { label: PAYMENT_METHOD_LABELS[key], icon }]),
+);
 
 export default function SalePay() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  // `nuevo` comes from Nueva venta, right after the sale was registered.
+  const { id, nuevo } = useLocalSearchParams<{ id: string; nuevo?: string }>();
   const router = useRouter();
   const qc = useQueryClient();
   const { activeId, activeBusiness } = useBusiness();
   const [loadingAction, setLoadingAction] = useState<string | null>(null);
   const [method, setMethod] = useState<Method>("efectivo");
+  const [justCreated, setJustCreated] = useState(nuevo === "1");
 
   const { data: sales = [], isLoading } = useQuery({
     queryKey: ["sales", activeId],
@@ -39,8 +43,20 @@ export default function SalePay() {
     enabled: !!activeId,
   });
   const sale = sales.find((s: any) => s.id === id);
+  const { data: customers = [] } = useQuery({
+    queryKey: ["customers", activeId],
+    queryFn: () => api.listCustomers(activeId!),
+    enabled: !!activeId && !!sale?.customer_id,
+  });
+  const customer = customers.find((c: any) => c.id === sale?.customer_id);
+
+  const receipt = useReceiptSender();
+  const sendReceipt = (s: any = sale) => s && receipt.send(s, customer?.phone);
 
   const currency = activeBusiness?.currency || "L";
+  const remind = () => openWhatsapp(customer?.phone, paymentReminder({
+    customerName: sale?.customer_name, businessName: activeBusiness?.name, sales: [sale], currency,
+  }));
   const symbol = currency === "USD" ? "$" : "L";
   const total = sale?.total || 0;
   const paid = sale?.paid || 0;
@@ -65,6 +81,7 @@ export default function SalePay() {
       Alert.alert(
         "Pago registrado",
         left <= 0.005 ? "La venta quedó pagada en su totalidad." : `Queda pendiente ${formatMoney(left, currency)}.`,
+        [{ text: "Listo", style: "cancel" }, { text: "Enviar recibo", onPress: () => sendReceipt(updated) }],
       );
     },
     onError: (e: any) => Alert.alert("No se pudo registrar el pago", e?.message || "Inténtalo de nuevo."),
@@ -196,6 +213,7 @@ export default function SalePay() {
       <SubHeader
         title="Cobrar venta"
         subtitle={created ? `${dayLabel(created)}, ${timeLabel(created)}` : undefined}
+        action={sale ? { icon: "receipt-outline", label: "Enviar recibo", onPress: () => sendReceipt(), testID: "receipt-header" } : undefined}
       />
       {isLoading ? (
         <View style={{ padding: spacing.xxl, alignItems: "center" }}><ActivityIndicator color={colors.brandPrimary} /></View>
@@ -209,6 +227,22 @@ export default function SalePay() {
         />
       ) : (
         <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing.xxl }}>
+          {justCreated && (
+            <View style={styles.createdBox} testID="sale-created">
+              <View style={styles.createdHead}>
+                <Ionicons name="checkmark-circle" size={22} color={colors.success} />
+                <Text style={styles.createdTitle}>Venta registrada</Text>
+                <Pressable onPress={() => setJustCreated(false)} hitSlop={10} accessibilityLabel="Cerrar aviso">
+                  <Ionicons name="close" size={18} color={colors.muted} />
+                </Pressable>
+              </View>
+              <Text style={styles.muted}>
+                {sale.customer_name ? `Envíale el recibo a ${sale.customer_name.split(" ")[0]} por WhatsApp.` : "Puedes enviar el recibo por WhatsApp."}
+              </Text>
+              <ReceiptButton onPress={() => sendReceipt()} busy={receipt.sending} testID="receipt-created" />
+            </View>
+          )}
+
           <View style={formStyles.card}>
             <View style={styles.saleHead}>
               <View style={styles.avatar}>
@@ -301,8 +335,22 @@ export default function SalePay() {
                   </Pressable>
                 </View>
               </View>
+              {!!sale.customer_id && (
+                <Pressable style={[styles.btn, styles.btnRemind]} onPress={remind} testID="sale-remind">
+                  <Ionicons name="logo-whatsapp" size={18} color={colors.warning} />
+                  <Text style={styles.btnRemindTxt}>Recordar pago por WhatsApp</Text>
+                </Pressable>
+              )}
             </>
           )}
+
+          <SectionHead title="Recibo" />
+          <View style={[formStyles.card, styles.receiptCard]}>
+            <Text style={styles.muted}>
+              PDF con tu logo, los productos, lo pagado y el saldo. Se comparte por WhatsApp o donde elijas.
+            </Text>
+            <ReceiptButton onPress={() => sendReceipt()} busy={receipt.sending} testID="receipt-send" outline />
+          </View>
 
           {(payments.length > 0 || untracked > 0.005) && (
             <>
@@ -402,7 +450,25 @@ export default function SalePay() {
           )}
         </ScrollView>
       )}
+      {receipt.preview}
     </View>
+  );
+}
+
+function ReceiptButton({ onPress, busy, outline, testID }: { onPress: () => void; busy: boolean; outline?: boolean; testID?: string }) {
+  const tint = outline ? colors.onSurface : colors.onBrandPrimary;
+  return (
+    <Pressable
+      style={[styles.btn, outline ? styles.btnOutline : styles.btnPrimary, busy && { opacity: 0.6 }]}
+      onPress={onPress}
+      disabled={busy}
+      testID={testID}
+    >
+      {busy ? <ActivityIndicator color={tint} /> : <>
+        <Ionicons name="document-text-outline" size={18} color={outline ? colors.onBrandSecondary : tint} />
+        <Text style={outline ? styles.btnOutlineTxt : styles.btnPrimaryTxt}>Enviar recibo al cliente</Text>
+      </>}
+    </Pressable>
   );
 }
 
@@ -479,6 +545,15 @@ const styles = StyleSheet.create({
     paddingVertical: 14, borderRadius: radius.md,
   },
   btnPrimary: { backgroundColor: colors.brandPrimary },
+  btnRemind: { marginBottom: spacing.md, borderWidth: 1, borderColor: colors.warning, backgroundColor: colors.warningTertiary },
+  btnRemindTxt: { color: colors.warning, fontWeight: "700", fontSize: 15 },
+  receiptCard: { padding: spacing.md, gap: spacing.md },
+  createdBox: {
+    gap: spacing.sm, padding: spacing.md, marginBottom: spacing.md, borderRadius: radius.lg,
+    borderWidth: 1, borderColor: colors.success, backgroundColor: colors.successTertiary,
+  },
+  createdHead: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
+  createdTitle: { flex: 1, fontSize: 16, fontWeight: "800", color: colors.success },
   btnPrimaryTxt: { color: colors.onBrandPrimary, fontWeight: "700", fontSize: 15 },
   btnPaypal: { backgroundColor: "#0070BA" },
   btnPaypalTxt: { color: "#FFFFFF", fontWeight: "700", fontSize: 15 },

@@ -93,7 +93,13 @@ export default function SaleNew() {
       paid: paidAmount,
       note,
     }),
-    onSuccess: () => { qc.invalidateQueries(); router.back(); },
+    // Opens the new sale, where the receipt can be sent. It goes into the cached list first so the
+    // screen doesn't show "Venta no encontrada" while the list reloads.
+    onSuccess: (sale: any) => {
+      qc.setQueryData(["sales", activeId], (old: any[] | undefined) => [sale, ...(old || [])]);
+      qc.invalidateQueries();
+      router.replace({ pathname: "/sale-pay", params: { id: sale.id, nuevo: "1" } });
+    },
     onError: (e: any) => Alert.alert("No se pudo registrar la venta", e?.message || "Inténtalo de nuevo."),
   });
 

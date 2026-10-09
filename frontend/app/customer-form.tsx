@@ -9,6 +9,7 @@ import { FormScreen, Field, SectionHead, formStyles, useLoadedForm } from "@/src
 import { api } from "@/src/api";
 import { useBusiness, formatMoney } from "@/src/business-context";
 import { dayLabel } from "@/src/utils/dates";
+import { openWhatsapp, paymentReminder } from "@/src/whatsapp";
 import { colors, radius, spacing } from "@/src/theme";
 
 const EMPTY = { name: "", phone: "", email: "", address: "", city: "", social: "", birthday: "", notes: "" };
@@ -67,6 +68,10 @@ export default function CustomerForm() {
   const paid = total - pending;
   const currency = activeBusiness?.currency || "L";
   const phoneDigits = (form.phone || "").replace(/[^\d+]/g, "");
+  // Without a phone WhatsApp opens its contact picker with the message ready.
+  const remind = () => openWhatsapp(form.phone, paymentReminder({
+    customerName: existing?.name, businessName: activeBusiness?.name, sales, currency,
+  }));
 
   return (
     <FormScreen
@@ -96,7 +101,7 @@ export default function CustomerForm() {
           </View>
           {!!phoneDigits && (
             <View style={styles.actions}>
-              <Pressable style={styles.action} onPress={() => Linking.openURL(`https://wa.me/${phoneDigits.replace(/^\+/, "")}`)} testID="customer-wa">
+              <Pressable style={styles.action} onPress={() => openWhatsapp(form.phone)} testID="customer-wa">
                 <Ionicons name="logo-whatsapp" size={18} color={colors.success} />
                 <Text style={styles.actionTxt}>WhatsApp</Text>
               </Pressable>
@@ -111,6 +116,12 @@ export default function CustomerForm() {
             <Stat label="Pagado" value={formatMoney(paid, currency)} tint={colors.success} divider />
             <Stat label="Pendiente" value={formatMoney(pending, currency)} tint={pending > 0.005 ? colors.warning : colors.onSurface} divider />
           </View>
+          {pending > 0.005 && (
+            <Pressable style={styles.remind} onPress={remind} testID="customer-remind">
+              <Ionicons name="logo-whatsapp" size={18} color={colors.warning} />
+              <Text style={styles.remindTxt}>Recordar pago · {formatMoney(pending, currency)}</Text>
+            </Pressable>
+          )}
         </View>
       )}
 
@@ -215,6 +226,11 @@ const styles = StyleSheet.create({
   },
   actionTxt: { fontSize: 14, fontWeight: "600", color: colors.onSurface },
   stats: { flexDirection: "row", paddingTop: spacing.md, borderTopWidth: 1, borderTopColor: colors.border },
+  remind: {
+    flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm, paddingVertical: 11,
+    borderRadius: radius.md, borderWidth: 1, borderColor: colors.warning, backgroundColor: colors.warningTertiary,
+  },
+  remindTxt: { fontSize: 14, fontWeight: "700", color: colors.warning },
   stat: { flex: 1, alignItems: "center", gap: 3, paddingHorizontal: spacing.xs },
   statDivider: { borderLeftWidth: 1, borderLeftColor: colors.border },
   statLabel: { fontSize: 12, color: colors.muted },
